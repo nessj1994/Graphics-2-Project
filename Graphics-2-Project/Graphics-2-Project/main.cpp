@@ -28,8 +28,8 @@ using namespace DirectX;
 #include "Trivial_VS.csh"
 
 //Create the backbuffer size
-#define BACKBUFFER_WIDTH 500
-#define BACKBUFFER_HEIGHT 500
+#define BACKBUFFER_WIDTH 1280
+#define BACKBUFFER_HEIGHT 720
 
 class APPLICATION
 {
@@ -66,6 +66,12 @@ class APPLICATION
 	//Create Timer
 	XTime timer;
 	float dt;
+
+
+	float translateZ = 0.0f;
+	float translateX = 0.0f;
+	float rotationY = 0.0f;
+	float rotationX = 0.0f;
 
 	//Create the shaders
 	ID3D11VertexShader* pVertexShader = nullptr;
@@ -384,7 +390,7 @@ bool APPLICATION::Run()
 		0, 0, 1, 0,
 		0, 0, 0, 1
 	};
-
+	
 	//Rotate world matrix on y axis
 	XMStoreFloat4x4(&star.worldMatrix, XMMatrixRotationY(dt));
 
@@ -394,22 +400,67 @@ bool APPLICATION::Run()
 		1, 0, 0, 0,
 		0, 1, 0, 0,
 		0, 0, 1, 0,
-		0, 0, -2, 1
+		0, 0, 0, 1
 	};
 
 	//Create the view matrix
 	XMMATRIX sceneViewMat = XMLoadFloat4x4(&scene.viewMatrix);
 	XMVECTOR sceneViewDet = XMMatrixDeterminant(sceneViewMat);
-	XMStoreFloat4x4(&scene.viewMatrix, XMMatrixInverse(&sceneViewDet, sceneViewMat));
+	
+	if(GetAsyncKeyState('W'))
+	{
+		translateZ += 1 * timer.Delta();
+	}
+	else if(GetAsyncKeyState('S'))
+	{
+		translateZ -= 1 * timer.Delta();
+	}
+	if(GetAsyncKeyState('A'))
+	{
+		translateX -= 1 * timer.Delta();
+	}
+	else if(GetAsyncKeyState('D'))
+	{
+		translateX += 1 * timer.Delta();
+	}
+
+	if(GetAsyncKeyState('Q'))
+	{
+		rotationY -= 2 * timer.Delta();
+	}
+	else if(GetAsyncKeyState('E'))
+	{
+		rotationY += 2 * timer.Delta();
+	}
+	if(GetAsyncKeyState(VK_UP))
+	{
+		rotationX -= 2 * timer.Delta();
+	}
+	else if(GetAsyncKeyState(VK_DOWN))
+	{
+		rotationX += 2 * timer.Delta();
+	}
+	sceneViewMat = XMMatrixMultiply(sceneViewMat, XMMatrixRotationY(rotationY));
+	sceneViewMat = XMMatrixMultiply(sceneViewMat, XMMatrixRotationX(rotationX));
+
+
+	sceneViewMat = XMMatrixMultiply(sceneViewMat, XMMatrixTranslation(translateX, 0.0f, translateZ));
+	
+
+	XMStoreFloat4x4(&scene.viewMatrix, XMMatrixInverse(0, sceneViewMat));
 
 	//Create the scene projection matrix
-	scene.projMatrix =
-	{
-		1.0f / tan(60.0f * (3.14159f / 180.0f)), 0.0f, 0.0f, 0.0f,
-		0.0f, 1.0f / tan(60.0f * (3.14159f / 180.0f)), 0.0f, 0.0f,
-		0.0f, 0.0f, 100.0f / (100.0f - 0.1f), 1.0f,
-		0.0f, 0.0f, -(100.0f * 0.1f) / (100.0f - 0.1f), 0.0f
-	};
+	//scene.projMatrix =
+	//{
+	//	1.0f / tan(60.0f * (3.14159f / 180.0f)), 0.0f, 0.0f, 0.0f,
+	//	0.0f, 1.0f / tan(60.0f * (3.14159f / 180.0f)), 0.0f, 0.0f,
+	//	0.0f, 0.0f, 100.0f / (100.0f - 0.1f), 1.0f,
+	//	0.0f, 0.0f, -(100.0f * 0.1f) / (100.0f - 0.1f), 0.0f
+	//};
+
+	XMStoreFloat4x4( &scene.projMatrix,XMMatrixPerspectiveFovLH(3.14/3.0f, (float)(BACKBUFFER_WIDTH) / (float)(BACKBUFFER_HEIGHT), 0.01f, 1000.0f));
+
+	
 
 	//Memcpy data from const buffer structs into Vertex shader const buffers
 	//Takes data from cpu to gpu
