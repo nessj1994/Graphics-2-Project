@@ -12,6 +12,8 @@
 #include <iostream>
 #include <ctime>
 #include "XTime.h"
+#include <vector>
+#include <fbxsdk.h>
 //Add xtimeclass here
 
 using namespace std;
@@ -33,6 +35,7 @@ using namespace DirectX;
 
 class APPLICATION
 {
+	struct SIMPLE_VERTEX;
 	//Used by windows code
 	HINSTANCE							application;
 	WNDPROC								appWndProc;
@@ -48,10 +51,17 @@ class APPLICATION
 
 	//Create Buffer variables
 
-	//Vertex Buffer info
+	//Star Vertex Buffer info
 	ID3D11Buffer* pVertexBuffer; //The buffer of vertices to be drawn
 	unsigned int TriVerts = 60;  //The number of vertices we will need
 	ID3D11InputLayout* pInputLayout; //The input layout
+
+	//Skybox vertex buffer info
+	ID3D11Buffer* pSBVertexBuffer;
+	ID3D11Buffer* pSBIndexBuffer;
+	unsigned int SBNumVerts;
+	unsigned int SBNumFaces;
+	vector<SIMPLE_VERTEX> SkyBoxVerts;
 
 	//Constant Buffers
 	ID3D11Buffer* pObjectCBuffer;
@@ -74,8 +84,15 @@ class APPLICATION
 	float rotationX = 0.0f;
 
 	//Create the shaders
+	
+	//Basic shaders
 	ID3D11VertexShader* pVertexShader = nullptr;
 	ID3D11PixelShader* pPixelShader = nullptr;
+
+	//Skybox Shaders
+	ID3D11VertexShader* pSkybox_VS = nullptr;
+	ID3D11PixelShader* pSkybox_PS = nullptr;
+	ID3D11ShaderResourceView* pSBResourceView;
 
 	//Constant buffer for rendered object
 	struct OBJECT
@@ -92,20 +109,28 @@ class APPLICATION
 
 	OBJECT star;
 	SCENE scene;
+	OBJECT SkyBox;
+
+
+	//Model loading variables
+	FbxManager* pFBXManager = nullptr;
 
 
 public:
 	//Create the application and the functions it will use to run and shutdown
 	APPLICATION(HINSTANCE hinst, WNDPROC proc);
 	bool Run();
+	void CheckInput();
 	bool ShutDown();
-
 
 	struct SIMPLE_VERTEX
 	{
-		float position[3];
-		float rgba[4];
+		XMFLOAT3 position;
+		XMFLOAT4 rgba;
 	};
+
+	bool LoadFBX(vector<SIMPLE_VERTEX>* output);
+
 };
 
 /******************************************************************/
@@ -184,10 +209,10 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 		);
 
 	//set the buffer
-	pSwapChain->GetBuffer(0, __uuidof(pBackBuffer), reinterpret_cast<void**>(&pBackBuffer));
+	hr = pSwapChain->GetBuffer(0, __uuidof(pBackBuffer), reinterpret_cast<void**>(&pBackBuffer));
 	
 	//Create the render target view
-	pDevice->CreateRenderTargetView(pBackBuffer, NULL, &pRTV);
+	hr = pDevice->CreateRenderTargetView(pBackBuffer, NULL, &pRTV);
 
 
 	//Set viewport data
@@ -203,38 +228,90 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	//Create the star
 	for(unsigned int i = 0; i < 10; i++)
 	{
-		verts[i].position[0] = cos(i * ((2 * 3.14159) / 10.0f));
-		verts[i].position[1] = sin(i * ((2 * 3.14159) / 10.0f));
-		verts[i].position[2] = 0;
+		verts[i].position.x = cos(i * ((2 * 3.14159) / 10.0f));
+		verts[i].position.y = sin(i * ((2 * 3.14159) / 10.0f));
+		verts[i].position.z = 0;
 
 		if(i % 2 != 0)
 		{
-			verts[i].position[0] *= 0.4f;
-			verts[i].position[1] *= 0.4f;
-			verts[i].position[2] *= 0.4f;
+			verts[i].position.x *= 0.4f;
+			verts[i].position.y *= 0.4f;
+			verts[i].position.z *= 0.4f;
 		}
 
-		verts[i].rgba[0] = 1;
-		verts[i].rgba[1] = 0;
-		verts[i].rgba[2] = 0;
-		verts[i].rgba[3] = 1;
+		verts[i].rgba.x = 1;
+		verts[i].rgba.y = 0;
+		verts[i].rgba.z = 0;
+		verts[i].rgba.w = 1;
 
 	}
 
-	verts[10].position[0] = 0;
-	verts[10].position[1] = 0;
-	verts[10].position[2] = -.3;
-	verts[10].rgba[0] = 0;
-	verts[10].rgba[1] = 0;
-	verts[10].rgba[2] = 1;
-	verts[10].rgba[3] = 1;
-	verts[11].position[0] = 0;
-	verts[11].position[1] = 0;
-	verts[11].position[2] = .3;
-	verts[11].rgba[0] = 0;
-	verts[11].rgba[1] = 0;
-	verts[11].rgba[2] = 1;
-	verts[11].rgba[3] = 1;
+	verts[10].position.x = 0;
+	verts[10].position.y = 0;
+	verts[10].position.z = -.3;
+	verts[10].rgba.x = 0;
+	verts[10].rgba.y = 0;
+	verts[10].rgba.z = 1;
+	verts[10].rgba.w = 1;
+	verts[11].position.x = 0;
+	verts[11].position.y = 0;
+	verts[11].position.z = .3;
+	verts[11].rgba.x = 0;
+	verts[11].rgba.y = 0;
+	verts[11].rgba.z = 1;
+	verts[11].rgba.w = 1;
+
+
+	//Create the skybox
+	
+	LoadFBX(&SkyBoxVerts);
+	for(int i = 0; i < SkyBoxVerts.size(); i++)
+	{
+
+		if(i < SkyBoxVerts.size()/2)
+		{
+		SkyBoxVerts[i].rgba.x = 0.1f;
+		SkyBoxVerts[i].rgba.y = 1.0f;
+		SkyBoxVerts[i].rgba.z = 0.1f;
+		SkyBoxVerts[i].rgba.w = 1.0f;
+		}
+		else
+		{
+			SkyBoxVerts[i].rgba.x = 1.0f;
+			SkyBoxVerts[i].rgba.y = 1.0f;
+			SkyBoxVerts[i].rgba.z = 1.0f;
+			SkyBoxVerts[i].rgba.w = 1.0f;
+		}
+
+	}
+	////Allocate an array of verts for the cube
+	//SIMPLE_VERTEX SkyBoxVerts[8];
+
+	////Set the number of verts and faces
+	//SBNumVerts = ((10 - 2) * 10) + 2;
+	//SBNumFaces = ((10 - 3)* (10) * 2) + (10 * 2);
+
+	////Create yaw and pitch for sphere
+	//float Yaw = 0.0f;
+	//float Pitch = 0.0f;
+
+	//
+	///*vector<SIMPLE_VERTEX> SkyBoxVertices(SBNumVerts);*/
+
+	//XMVECTOR currVertPosition = XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
+
+	//SkyBoxVerts[0].position.x = 0.0f;
+	//SkyBoxVerts[0].position.y = 0.0f;
+	//SkyBoxVerts[0].position.z = 1.0f;
+
+	//for(unsigned int i = 0; i < 10 - 2; i++)
+	//{
+	//	Pitch = (i + 1) * (3.14 / 10 - 1);
+	//}
+
+
+
+
 
 
 	//Describe the back buffer
@@ -243,17 +320,17 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	descBackBuffer.Usage = D3D11_USAGE_IMMUTABLE;
 	descBackBuffer.BindFlags = D3D11_BIND_VERTEX_BUFFER;
 	descBackBuffer.CPUAccessFlags = NULL;
-	descBackBuffer.ByteWidth = sizeof(SIMPLE_VERTEX)* TriVerts;
+	descBackBuffer.ByteWidth = sizeof(SIMPLE_VERTEX)* 2280;
 
 	//Create buffer initial data
 	D3D11_SUBRESOURCE_DATA data;
 	ZeroMemory(&data, sizeof(data));
 
 	//set the memory to the desired data
-	data.pSysMem = verts;
-	
-	//create the index buffer
-	pDevice->CreateBuffer(&descBackBuffer, &data, &pVertexBuffer);
+	//data.pSysMem = verts;
+	data.pSysMem = &SkyBoxVerts[0];
+	//create the vertex buffer
+	hr = pDevice->CreateBuffer(&descBackBuffer, &data, &pVertexBuffer);
 
 	pDevice->CreateVertexShader(Trivial_VS, sizeof(Trivial_VS), NULL, &pVertexShader);
 	pDevice->CreatePixelShader(Trivial_PS, sizeof(Trivial_PS), NULL, &pPixelShader);
@@ -293,20 +370,20 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	};
 
 	//Describe the index buffer
-	D3D11_BUFFER_DESC descIndexBuffer;
-	ZeroMemory(&descIndexBuffer, sizeof(descIndexBuffer));
-	descIndexBuffer.BindFlags = D3D10_BIND_INDEX_BUFFER;
-	descIndexBuffer.ByteWidth = sizeof(unsigned int) * TriVerts;
-	descIndexBuffer.Usage = D3D11_USAGE_DEFAULT;
+	//D3D11_BUFFER_DESC descIndexBuffer;
+	//ZeroMemory(&descIndexBuffer, sizeof(descIndexBuffer));
+	//descIndexBuffer.BindFlags = D3D10_BIND_INDEX_BUFFER;
+	//descIndexBuffer.ByteWidth = sizeof(unsigned int) * TriVerts;
+	//descIndexBuffer.Usage = D3D11_USAGE_DEFAULT;
 
-	//Create the initial data for the index buffer
-	D3D11_SUBRESOURCE_DATA indexInitData;
-	indexInitData.pSysMem = indices;
-	indexInitData.SysMemPitch = 0;
-	indexInitData.SysMemSlicePitch = 0;
+	////Create the initial data for the index buffer
+	//D3D11_SUBRESOURCE_DATA indexInitData;
+	//indexInitData.pSysMem = indices;
+	//indexInitData.SysMemPitch = 0;
+	//indexInitData.SysMemSlicePitch = 0;
 
-	//create the index buffer
-	pDevice->CreateBuffer(&descIndexBuffer, &indexInitData, &pIndexBuffer);
+	////create the index buffer
+	//pDevice->CreateBuffer(&descIndexBuffer, &indexInitData, &pIndexBuffer);
 
 
 	//describe the object constant buffer
@@ -400,63 +477,26 @@ bool APPLICATION::Run()
 		1, 0, 0, 0,
 		0, 1, 0, 0,
 		0, 0, 1, 0,
-		0, 0, 0, 1
+		0, 0, -2, 1
 	};
 
 	//Create the view matrix
 	XMMATRIX sceneViewMat = XMLoadFloat4x4(&scene.viewMatrix);
 	XMVECTOR sceneViewDet = XMMatrixDeterminant(sceneViewMat);
 	
-	if(GetAsyncKeyState('W'))
-	{
-		translateZ += 1 * timer.Delta();
-	}
-	else if(GetAsyncKeyState('S'))
-	{
-		translateZ -= 1 * timer.Delta();
-	}
-	if(GetAsyncKeyState('A'))
-	{
-		translateX -= 1 * timer.Delta();
-	}
-	else if(GetAsyncKeyState('D'))
-	{
-		translateX += 1 * timer.Delta();
-	}
-
-	if(GetAsyncKeyState('Q'))
-	{
-		rotationY -= 2 * timer.Delta();
-	}
-	else if(GetAsyncKeyState('E'))
-	{
-		rotationY += 2 * timer.Delta();
-	}
-	if(GetAsyncKeyState(VK_UP))
-	{
-		rotationX -= 2 * timer.Delta();
-	}
-	else if(GetAsyncKeyState(VK_DOWN))
-	{
-		rotationX += 2 * timer.Delta();
-	}
+	//Check for input to move the camera
+	CheckInput();
+	
+	//Apply camera rotations
 	sceneViewMat = XMMatrixMultiply(sceneViewMat, XMMatrixRotationY(rotationY));
 	sceneViewMat = XMMatrixMultiply(sceneViewMat, XMMatrixRotationX(rotationX));
 
-
+	//Apply camera translations
 	sceneViewMat = XMMatrixMultiply(sceneViewMat, XMMatrixTranslation(translateX, 0.0f, translateZ));
 	
 
 	XMStoreFloat4x4(&scene.viewMatrix, XMMatrixInverse(0, sceneViewMat));
 
-	//Create the scene projection matrix
-	//scene.projMatrix =
-	//{
-	//	1.0f / tan(60.0f * (3.14159f / 180.0f)), 0.0f, 0.0f, 0.0f,
-	//	0.0f, 1.0f / tan(60.0f * (3.14159f / 180.0f)), 0.0f, 0.0f,
-	//	0.0f, 0.0f, 100.0f / (100.0f - 0.1f), 1.0f,
-	//	0.0f, 0.0f, -(100.0f * 0.1f) / (100.0f - 0.1f), 0.0f
-	//};
 
 	XMStoreFloat4x4( &scene.projMatrix,XMMatrixPerspectiveFovLH(3.14/3.0f, (float)(BACKBUFFER_WIDTH) / (float)(BACKBUFFER_HEIGHT), 0.01f, 1000.0f));
 
@@ -482,7 +522,7 @@ bool APPLICATION::Run()
 	//Link buffers
 	pDeviceContext->VSSetConstantBuffers(0, 1, &pObjectCBuffer);
 	pDeviceContext->VSSetConstantBuffers(1, 1, &pSceneCBuffer);
-	pDeviceContext->IASetIndexBuffer(pIndexBuffer, DXGI_FORMAT_R32_UINT, 0);
+	//pDeviceContext->IASetIndexBuffer(pIndexBuffer, DXGI_FORMAT_R32_UINT, 0);
 
 	//Set the vertex buffer for our object
 	unsigned int stride[] = { sizeof(SIMPLE_VERTEX) };
@@ -501,7 +541,7 @@ bool APPLICATION::Run()
 
 
 	
-	pDeviceContext->DrawIndexed(TriVerts, 0, 0);
+	pDeviceContext->Draw(2280, 0);
 
 
 	//Present to the screen
@@ -526,7 +566,7 @@ bool APPLICATION::ShutDown()
 	pObjectCBuffer->Release();
 	pInputLayout->Release();
 	pSceneCBuffer->Release();
-	pIndexBuffer->Release();
+//	pIndexBuffer->Release();
 	pDepthBuffer->Release();
 	pDSV->Release();
 	UnregisterClass(L"DirectXApplication", application);
@@ -567,3 +607,126 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 }
 /**************************************************************/
 /*********************** End Windows *************************/
+
+//Check for input
+void APPLICATION::CheckInput()
+{
+	if(GetAsyncKeyState('W'))
+	{
+		translateZ += 1 * timer.Delta();
+	}
+	else if(GetAsyncKeyState('S'))
+	{
+		translateZ -= 1 * timer.Delta();
+	}
+	if(GetAsyncKeyState('A'))
+	{
+		translateX -= 1 * timer.Delta();
+	}
+	else if(GetAsyncKeyState('D'))
+	{
+		translateX += 1 * timer.Delta();
+	}
+
+	if(GetAsyncKeyState('Q'))
+	{
+		rotationY -= 2 * timer.Delta();
+	}
+	else if(GetAsyncKeyState('E'))
+	{
+		rotationY += 2 * timer.Delta();
+	}
+	if(GetAsyncKeyState(VK_UP))
+	{
+		rotationX -= 2 * timer.Delta();
+	}
+	else if(GetAsyncKeyState(VK_DOWN))
+	{
+		rotationX += 2 * timer.Delta();
+	}
+}
+
+
+bool APPLICATION::LoadFBX(vector<APPLICATION::SIMPLE_VERTEX>* output)
+{
+
+	if(pFBXManager == nullptr)
+	{
+		pFBXManager = FbxManager::Create();
+
+		FbxIOSettings* pIOSettings = FbxIOSettings::Create(pFBXManager, IOSROOT);
+		pFBXManager->SetIOSettings(pIOSettings);
+
+	}
+
+	FbxImporter* pImporter = FbxImporter::Create(pFBXManager, "");
+	FbxScene* pScene = FbxScene::Create(pFBXManager, "");
+
+	bool bSuccess = pImporter->Initialize("C:\\Users\\fullsail\\Documents\\GFX2\\Graphics-2-Project\\Graphics-2-Project\\Assets\\Sphere.fbx",
+		-1, pFBXManager->GetIOSettings());
+
+	if(bSuccess == false)
+	{
+		return false;
+	}
+
+	bSuccess = pImporter->Import(pScene);
+
+	if(bSuccess == false)
+	{
+		return false;
+	}
+
+	pImporter->Destroy();
+
+	FbxNode* pRootNode = pScene->GetRootNode();
+
+	if(pRootNode)
+	{
+
+		for(unsigned int i = 0; i < pRootNode->GetChildCount(); i++)
+		{
+			FbxNode* pChildNode = pRootNode->GetChild(i);
+
+			if(pChildNode->GetNodeAttribute() == NULL)
+			{
+				continue;
+			}
+
+			FbxNodeAttribute::EType AttributeType = pChildNode->GetNodeAttribute()->GetAttributeType();
+			
+			if(AttributeType != FbxNodeAttribute::eMesh)
+			{
+				continue;
+			}
+
+			FbxMesh* pMesh = (FbxMesh*)pChildNode->GetNodeAttribute();
+
+			FbxVector4* pVertices = pMesh->GetControlPoints();
+
+
+			for(unsigned int j = 0; j < pMesh->GetPolygonCount(); j++)
+			{
+				int nNumVertices = pMesh->GetPolygonSize(j);
+
+				assert(nNumVertices == 3 &&
+					"LoadFBX function failed due to a vert count not equal to 3. Polygons must be triangles");
+				
+				for(unsigned int k = 0; k < nNumVertices; k++)
+				{
+					int nControlPointIndex = pMesh->GetPolygonVertex(j, k);
+
+					SIMPLE_VERTEX vert;
+				
+					vert.position.x = (float)pVertices[nControlPointIndex].mData[0];
+					vert.position.y = (float)pVertices[nControlPointIndex].mData[1];
+					vert.position.z = (float)pVertices[nControlPointIndex].mData[2];
+
+					output->push_back(vert);
+				}
+			}
+
+		}
+	}
+	return true;
+}
