@@ -20,7 +20,7 @@ using namespace std;
 //Include the direct x api and lib
 #include <d3d11.h>
 #pragma comment(lib, "D3D11.lib")
-
+#include <d3d11sdklayers.h>
 //Include the direct x math library
 #include <DirectXMath.h>
 using namespace DirectX;
@@ -52,13 +52,15 @@ class APPLICATION
 	//Create Buffer variables
 
 	//Star Vertex Buffer info
-	ID3D11Buffer* pVertexBuffer; //The buffer of vertices to be drawn
+	//ID3D11Buffer* pVertexBuffer; //The buffer of vertices to be drawn
+	ID3D11Buffer* pStarVertBuffer = nullptr;
 	unsigned int TriVerts = 60;  //The number of vertices we will need
 	ID3D11InputLayout* pInputLayout; //The input layout
 
+
+
 	//Skybox vertex buffer info
 	ID3D11Buffer* pSBVertexBuffer;
-	ID3D11Buffer* pSBIndexBuffer;
 	unsigned int SBNumVerts;
 	unsigned int SBNumFaces;
 	vector<SIMPLE_VERTEX> SkyBoxVerts;
@@ -67,6 +69,7 @@ class APPLICATION
 	ID3D11Buffer* pObjectCBuffer;
 	ID3D11Buffer* pSceneCBuffer;
 	ID3D11Buffer* pIndexBuffer;
+	ID3D11Buffer* pSkyboxCBuffer;
 	
 	//Depth Buffer
 	ID3D11Texture2D* pDepthBuffer;
@@ -90,9 +93,9 @@ class APPLICATION
 	ID3D11PixelShader* pPixelShader = nullptr;
 
 	//Skybox Shaders
-	ID3D11VertexShader* pSkybox_VS = nullptr;
-	ID3D11PixelShader* pSkybox_PS = nullptr;
-	ID3D11ShaderResourceView* pSBResourceView;
+	//ID3D11VertexShader* pSkybox_VS = nullptr;
+	//ID3D11PixelShader* pSkybox_PS = nullptr;
+	//ID3D11ShaderResourceView* pSBResourceView;
 
 	//Constant buffer for rendered object
 	struct OBJECT
@@ -223,6 +226,113 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	vp.MinDepth = 0;
 	vp.MaxDepth = 1;
 
+	
+
+
+
+
+	//Create the skybox
+	
+	LoadFBX(&SkyBoxVerts);
+	for(int i = 0; i < SkyBoxVerts.size(); i++)
+	{
+
+		if(i < SkyBoxVerts.size()/2)
+		{
+		SkyBoxVerts[i].rgba.x = 0.1f;
+		SkyBoxVerts[i].rgba.y = 1.0f;
+		SkyBoxVerts[i].rgba.z = 0.1f;
+		SkyBoxVerts[i].rgba.w = 1.0f;
+		}
+		else
+		{
+			SkyBoxVerts[i].rgba.x = 1.0f;
+			SkyBoxVerts[i].rgba.y = 1.0f;
+			SkyBoxVerts[i].rgba.z = 1.0f;
+			SkyBoxVerts[i].rgba.w = 1.0f;
+		}
+
+	}
+
+	//Describe the back buffer
+	D3D11_BUFFER_DESC descSBVertBuffer;
+	ZeroMemory(&descSBVertBuffer, sizeof(descSBVertBuffer));
+	descSBVertBuffer.Usage = D3D11_USAGE_IMMUTABLE;
+	descSBVertBuffer.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+	descSBVertBuffer.CPUAccessFlags = NULL;
+	descSBVertBuffer.ByteWidth = sizeof(SIMPLE_VERTEX)* 17544;
+
+	//Create buffer initial data
+	D3D11_SUBRESOURCE_DATA data;
+	ZeroMemory(&data, sizeof(data));
+
+	//set the memory to the desired data
+	data.pSysMem = &SkyBoxVerts[0];
+	//create the vertex buffer
+	hr = pDevice->CreateBuffer(&descSBVertBuffer, &data, &pSBVertexBuffer);
+
+	//Create the shaders
+	pDevice->CreateVertexShader(Trivial_VS, sizeof(Trivial_VS), NULL, &pVertexShader);
+	pDevice->CreatePixelShader(Trivial_PS, sizeof(Trivial_PS), NULL, &pPixelShader);
+
+	//Setup the input layout
+	D3D11_INPUT_ELEMENT_DESC vLayout[] = 
+	{
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+	};
+
+	//Create the input layout
+	pDevice->CreateInputLayout(vLayout, 2, Trivial_VS, sizeof(Trivial_VS), &pInputLayout);
+
+
+
+	D3D11_BUFFER_DESC descSkyboxConstBuffer;
+	ZeroMemory(&descSkyboxConstBuffer, sizeof(descSkyboxConstBuffer));
+	descSkyboxConstBuffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	descSkyboxConstBuffer.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+	descSkyboxConstBuffer.Usage = D3D11_USAGE_DYNAMIC;
+	descSkyboxConstBuffer.ByteWidth = sizeof(OBJECT);
+	//create the object const buffer
+	pDevice->CreateBuffer(&descSkyboxConstBuffer, NULL, &pSkyboxCBuffer);
+
+
+	//Describe the scene constant buffer
+	D3D11_BUFFER_DESC descSceneConstBuffer;
+	ZeroMemory(&descSceneConstBuffer, sizeof(descSceneConstBuffer));
+	descSceneConstBuffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	descSceneConstBuffer.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+	descSceneConstBuffer.Usage = D3D11_USAGE_DYNAMIC;
+	descSceneConstBuffer.ByteWidth = sizeof(SCENE);
+
+	//Create the scene const buffer
+	pDevice->CreateBuffer(&descSceneConstBuffer, NULL, &pSceneCBuffer);
+	
+
+	//Describe the depth buffer
+	D3D11_TEXTURE2D_DESC descDepthBuffer;
+	ZeroMemory(&descDepthBuffer, sizeof(descDepthBuffer));
+	descDepthBuffer.Width = BACKBUFFER_WIDTH;
+	descDepthBuffer.Height = BACKBUFFER_HEIGHT;
+	descDepthBuffer.MipLevels = 1;
+	descDepthBuffer.ArraySize = 1;
+	descDepthBuffer.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+	descDepthBuffer.Format = DXGI_FORMAT_D32_FLOAT;
+	descDepthBuffer.SampleDesc.Count = 1;
+	descDepthBuffer.SampleDesc.Quality = 0;
+	descDepthBuffer.Usage = D3D11_USAGE_DEFAULT;
+
+
+	//Create the depth buffer
+	pDevice->CreateTexture2D(&descDepthBuffer, NULL, &pDepthBuffer);
+
+	pDevice->CreateDepthStencilView(pDepthBuffer, NULL, &pDSV);
+
+
+	//CREATE STAR OBJECT
+
+	//Create the depth stencil view
+
 	SIMPLE_VERTEX verts[12];
 
 	//Create the star
@@ -261,89 +371,29 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	verts[11].rgba.z = 1;
 	verts[11].rgba.w = 1;
 
-
-	//Create the skybox
-	
-	LoadFBX(&SkyBoxVerts);
-	for(int i = 0; i < SkyBoxVerts.size(); i++)
-	{
-
-		if(i < SkyBoxVerts.size()/2)
-		{
-		SkyBoxVerts[i].rgba.x = 0.1f;
-		SkyBoxVerts[i].rgba.y = 1.0f;
-		SkyBoxVerts[i].rgba.z = 0.1f;
-		SkyBoxVerts[i].rgba.w = 1.0f;
-		}
-		else
-		{
-			SkyBoxVerts[i].rgba.x = 1.0f;
-			SkyBoxVerts[i].rgba.y = 1.0f;
-			SkyBoxVerts[i].rgba.z = 1.0f;
-			SkyBoxVerts[i].rgba.w = 1.0f;
-		}
-
-	}
-	////Allocate an array of verts for the cube
-	//SIMPLE_VERTEX SkyBoxVerts[8];
-
-	////Set the number of verts and faces
-	//SBNumVerts = ((10 - 2) * 10) + 2;
-	//SBNumFaces = ((10 - 3)* (10) * 2) + (10 * 2);
-
-	////Create yaw and pitch for sphere
-	//float Yaw = 0.0f;
-	//float Pitch = 0.0f;
-
-	//
-	///*vector<SIMPLE_VERTEX> SkyBoxVertices(SBNumVerts);*/
-
-	//XMVECTOR currVertPosition = XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
-
-	//SkyBoxVerts[0].position.x = 0.0f;
-	//SkyBoxVerts[0].position.y = 0.0f;
-	//SkyBoxVerts[0].position.z = 1.0f;
-
-	//for(unsigned int i = 0; i < 10 - 2; i++)
-	//{
-	//	Pitch = (i + 1) * (3.14 / 10 - 1);
-	//}
-
-
-
-
-
-
 	//Describe the back buffer
-	D3D11_BUFFER_DESC descBackBuffer;
-	ZeroMemory(&descBackBuffer, sizeof(descBackBuffer));
-	descBackBuffer.Usage = D3D11_USAGE_IMMUTABLE;
-	descBackBuffer.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-	descBackBuffer.CPUAccessFlags = NULL;
-	descBackBuffer.ByteWidth = sizeof(SIMPLE_VERTEX)* 2280;
+	D3D11_BUFFER_DESC descStarVertBuffer;
+	ZeroMemory(&descStarVertBuffer, sizeof(descStarVertBuffer));
+	descStarVertBuffer.Usage = D3D11_USAGE_IMMUTABLE;
+	descStarVertBuffer.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+	descStarVertBuffer.CPUAccessFlags = NULL;
+	descStarVertBuffer.ByteWidth = sizeof(SIMPLE_VERTEX) * TriVerts;
 
 	//Create buffer initial data
-	D3D11_SUBRESOURCE_DATA data;
 	ZeroMemory(&data, sizeof(data));
 
 	//set the memory to the desired data
 	//data.pSysMem = verts;
-	data.pSysMem = &SkyBoxVerts[0];
+	data.pSysMem = &verts[0];
 	//create the vertex buffer
-	hr = pDevice->CreateBuffer(&descBackBuffer, &data, &pVertexBuffer);
-
-	pDevice->CreateVertexShader(Trivial_VS, sizeof(Trivial_VS), NULL, &pVertexShader);
-	pDevice->CreatePixelShader(Trivial_PS, sizeof(Trivial_PS), NULL, &pPixelShader);
-
-	//Setup the input layout
-	D3D11_INPUT_ELEMENT_DESC vLayout[] = 
+	if(pStarVertBuffer)
 	{
-		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 }
-	};
+		pStarVertBuffer->Release();
+		pStarVertBuffer = nullptr;
+	}
 
-	//Create the input layout
-	pDevice->CreateInputLayout(vLayout, 2, Trivial_VS, sizeof(Trivial_VS), &pInputLayout);
+	pDevice->CreateBuffer(&descStarVertBuffer, &data, &pStarVertBuffer);
+
 
 	//Setup the star vertex winding
 	unsigned int indices[] =
@@ -370,21 +420,21 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	};
 
 	//Describe the index buffer
-	//D3D11_BUFFER_DESC descIndexBuffer;
-	//ZeroMemory(&descIndexBuffer, sizeof(descIndexBuffer));
-	//descIndexBuffer.BindFlags = D3D10_BIND_INDEX_BUFFER;
-	//descIndexBuffer.ByteWidth = sizeof(unsigned int) * TriVerts;
-	//descIndexBuffer.Usage = D3D11_USAGE_DEFAULT;
+	D3D11_BUFFER_DESC descIndexBuffer;
+	ZeroMemory(&descIndexBuffer, sizeof(descIndexBuffer));
+	descIndexBuffer.BindFlags = D3D10_BIND_INDEX_BUFFER;
+	descIndexBuffer.ByteWidth = sizeof(unsigned int) * TriVerts;
+	descIndexBuffer.Usage = D3D11_USAGE_DEFAULT;
+	
 
-	////Create the initial data for the index buffer
-	//D3D11_SUBRESOURCE_DATA indexInitData;
-	//indexInitData.pSysMem = indices;
-	//indexInitData.SysMemPitch = 0;
-	//indexInitData.SysMemSlicePitch = 0;
+	//Create the initial data for the index buffer
+	D3D11_SUBRESOURCE_DATA indexInitData;
+	indexInitData.pSysMem = indices;
+	indexInitData.SysMemPitch = 0;
+	indexInitData.SysMemSlicePitch = 0;
 
-	////create the index buffer
-	//pDevice->CreateBuffer(&descIndexBuffer, &indexInitData, &pIndexBuffer);
-
+	//create the index buffer
+	pDevice->CreateBuffer(&descIndexBuffer, &indexInitData, &pIndexBuffer);
 
 	//describe the object constant buffer
 	D3D11_BUFFER_DESC descObjectConstBuffer;
@@ -394,41 +444,8 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	descObjectConstBuffer.Usage = D3D11_USAGE_DYNAMIC;
 	descObjectConstBuffer.ByteWidth = sizeof(OBJECT);
 
-	//create the object const buffer
 	pDevice->CreateBuffer(&descObjectConstBuffer, NULL, &pObjectCBuffer);
 
-
-	//Describe the scene constant buffer
-	D3D11_BUFFER_DESC descSceneConstBuffer;
-	ZeroMemory(&descSceneConstBuffer, sizeof(descSceneConstBuffer));
-	descSceneConstBuffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-	descSceneConstBuffer.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-	descSceneConstBuffer.Usage = D3D11_USAGE_DYNAMIC;
-	descSceneConstBuffer.ByteWidth = sizeof(SCENE);
-
-	//Create the scene const buffer
-	pDevice->CreateBuffer(&descSceneConstBuffer, NULL, &pSceneCBuffer);
-	
-
-	//Describe the depth buffer
-	D3D11_TEXTURE2D_DESC descDepthBuffer;
-	ZeroMemory(&descDepthBuffer, sizeof(descDepthBuffer));
-	descDepthBuffer.Width = BACKBUFFER_WIDTH;
-	descDepthBuffer.Height = BACKBUFFER_HEIGHT;
-	descDepthBuffer.MipLevels = 1;
-	descDepthBuffer.ArraySize = 1;
-	descDepthBuffer.BindFlags = D3D11_BIND_DEPTH_STENCIL;
-	descDepthBuffer.Format = DXGI_FORMAT_D32_FLOAT;
-	descDepthBuffer.SampleDesc.Count = 1;
-	descDepthBuffer.SampleDesc.Quality = 0;
-	descDepthBuffer.Usage = D3D11_USAGE_DEFAULT;
-
-
-	//Create the depth buffer
-	pDevice->CreateTexture2D(&descDepthBuffer, NULL, &pDepthBuffer);
-
-	//Create the depth stencil view
-	pDevice->CreateDepthStencilView(pDepthBuffer, NULL, &pDSV);
 
 	dt = 0;
 
@@ -468,8 +485,13 @@ bool APPLICATION::Run()
 		0, 0, 0, 1
 	};
 	
+	XMStoreFloat4x4(&SkyBox.worldMatrix, XMMatrixIdentity());
 	//Rotate world matrix on y axis
 	XMStoreFloat4x4(&star.worldMatrix, XMMatrixRotationY(dt));
+	XMMATRIX SkyboxWorldMatrix;
+	XMLoadFloat4x4(&SkyBox.worldMatrix);
+	SkyboxWorldMatrix = XMMatrixRotationY(dt);
+	XMStoreFloat4x4(&SkyBox.worldMatrix, XMMatrixMultiply(SkyboxWorldMatrix, XMMatrixTranslation(-2, -2, 0)));
 
 	//Create the scene's view matrix 
 	scene.viewMatrix =
@@ -477,12 +499,12 @@ bool APPLICATION::Run()
 		1, 0, 0, 0,
 		0, 1, 0, 0,
 		0, 0, 1, 0,
-		0, 0, -2, 1
+		0, 0, 0, 1
 	};
 
 	//Create the view matrix
 	XMMATRIX sceneViewMat = XMLoadFloat4x4(&scene.viewMatrix);
-	XMVECTOR sceneViewDet = XMMatrixDeterminant(sceneViewMat);
+	//XMVECTOR sceneViewDet = XMMatrixDeterminant(sceneViewMat);
 	
 	//Check for input to move the camera
 	CheckInput();
@@ -506,10 +528,10 @@ bool APPLICATION::Run()
 	//Takes data from cpu to gpu
 	//Object 
 	D3D11_MAPPED_SUBRESOURCE pSubRes;
-	pDeviceContext->Map(pObjectCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
+	pDeviceContext->Map(pSkyboxCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
 		0, &pSubRes);
-	memcpy(pSubRes.pData, &star, sizeof(OBJECT));
-	pDeviceContext->Unmap(pObjectCBuffer, 0);
+	memcpy(pSubRes.pData, &SkyBox, sizeof(OBJECT));
+	pDeviceContext->Unmap(pSkyboxCBuffer, 0);
 
 
 	//Do the same for the scene
@@ -520,14 +542,13 @@ bool APPLICATION::Run()
 	pDeviceContext->Unmap(pSceneCBuffer, 0);
 
 	//Link buffers
-	pDeviceContext->VSSetConstantBuffers(0, 1, &pObjectCBuffer);
+	pDeviceContext->VSSetConstantBuffers(0, 1, &pSkyboxCBuffer);
 	pDeviceContext->VSSetConstantBuffers(1, 1, &pSceneCBuffer);
-	//pDeviceContext->IASetIndexBuffer(pIndexBuffer, DXGI_FORMAT_R32_UINT, 0);
 
 	//Set the vertex buffer for our object
 	unsigned int stride[] = { sizeof(SIMPLE_VERTEX) };
 	unsigned int offsets[] = { 0 };
-	pDeviceContext->IASetVertexBuffers(0, 1, &pVertexBuffer, stride, offsets);
+	pDeviceContext->IASetVertexBuffers(0, 1, &pSBVertexBuffer, stride, offsets);
 
 	//Set the shaders to be used
 	pDeviceContext->VSSetShader(pVertexShader, NULL, 0);
@@ -541,8 +562,33 @@ bool APPLICATION::Run()
 
 
 	
-	pDeviceContext->Draw(2280, 0);
+	pDeviceContext->Draw(17544, 0);
 
+
+	
+
+
+
+
+
+	//Set values for star draw call
+
+	pDeviceContext->IASetIndexBuffer(pIndexBuffer, DXGI_FORMAT_R32_UINT, 0);
+
+	pDeviceContext->IASetVertexBuffers(0, 1, &pStarVertBuffer, stride, offsets);
+
+	//Memcpy the stars data from cpu to gpu
+	D3D11_MAPPED_SUBRESOURCE pStarSubRes;
+	pDeviceContext->Map(pObjectCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
+		0, &pStarSubRes);
+	memcpy(pStarSubRes.pData, &star, sizeof(OBJECT));
+	pDeviceContext->Unmap(pObjectCBuffer, 0);
+
+	//Create the star's constant buffer
+
+	pDeviceContext->VSSetConstantBuffers(0, 1, &pObjectCBuffer);
+
+	pDeviceContext->DrawIndexed(TriVerts, 0, 0);
 
 	//Present to the screen
 	pSwapChain->Present(0, 0);
@@ -555,20 +601,46 @@ bool APPLICATION::Run()
 bool APPLICATION::ShutDown()
 {
 	//Release all memory
-	pDevice->Release();
+	pDeviceContext->ClearState();
+
 	pDeviceContext->Release();
 	pRTV->Release();
 	pSwapChain->Release();
 	pBackBuffer->Release();
-	pVertexBuffer->Release();
-	pPixelShader->Release();
-	pVertexShader->Release();
-	pObjectCBuffer->Release();
+	pStarVertBuffer->Release();
 	pInputLayout->Release();
+	pSBVertexBuffer->Release();
+	pObjectCBuffer->Release();
 	pSceneCBuffer->Release();
-//	pIndexBuffer->Release();
+	pIndexBuffer->Release();
+	pSkyboxCBuffer->Release();
 	pDepthBuffer->Release();
 	pDSV->Release();
+	pPixelShader->Release();
+	pVertexShader->Release();
+
+	//pVertexBuffer->Release();
+	//pPixelShader->Release();
+	//pVertexShader->Release();
+	//pObjectCBuffer->Release();
+	//pInputLayout->Release();
+	//pSceneCBuffer->Release();
+	//pIndexBuffer->Release();
+	//pDepthBuffer->Release();
+	//pStarVertBuffer->Release();
+	//pSkyboxCBuffer->Release();
+	//pSBVertexBuffer->Release();
+	//pDSV->Release();
+	//
+	//ID3D11Debug* d3dDebug = nullptr;
+	//pDevice->QueryInterface(__uuidof(ID3D11Debug), reinterpret_cast<void**>(&d3dDebug));
+
+	//
+
+	//d3dDebug->ReportLiveDeviceObjects(D3D11_RLDO_DETAIL);
+
+
+	pDevice->Release();
 	UnregisterClass(L"DirectXApplication", application);
 
 	return true;
@@ -662,7 +734,7 @@ bool APPLICATION::LoadFBX(vector<APPLICATION::SIMPLE_VERTEX>* output)
 	FbxImporter* pImporter = FbxImporter::Create(pFBXManager, "");
 	FbxScene* pScene = FbxScene::Create(pFBXManager, "");
 
-	bool bSuccess = pImporter->Initialize("C:\\Users\\fullsail\\Documents\\GFX2\\Graphics-2-Project\\Graphics-2-Project\\Assets\\Sphere.fbx",
+	bool bSuccess = pImporter->Initialize("C:\\Users\\fullsail\\Documents\\GFX2\\Graphics-2-Project\\Graphics-2-Project\\Assets\\Knight.fbx",
 		-1, pFBXManager->GetIOSettings());
 
 	if(bSuccess == false)
