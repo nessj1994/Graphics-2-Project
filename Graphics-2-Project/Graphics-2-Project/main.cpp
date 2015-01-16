@@ -61,7 +61,7 @@ class APPLICATION
 
 	//Skybox vertex buffer info
 	ID3D11Buffer* pSBVertexBuffer;
-	unsigned int SBNumVerts;
+	int SBNumVerts;
 	unsigned int SBNumFaces;
 	vector<SIMPLE_VERTEX> SkyBoxVerts;
 
@@ -130,9 +130,12 @@ public:
 	{
 		XMFLOAT3 position;
 		XMFLOAT4 rgba;
+		XMFLOAT3 normal;
+		XMFLOAT2 UV;
+		
 	};
 
-	bool LoadFBX(vector<SIMPLE_VERTEX>* output);
+	bool LoadFBX(vector<SIMPLE_VERTEX>* output, string filename, int numVerts);
 
 };
 
@@ -233,7 +236,9 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 
 	//Create the skybox
 	
-	LoadFBX(&SkyBoxVerts);
+	LoadFBX(&SkyBoxVerts,
+		"C:\\Users\\fullsail\\Documents\\GFX2\\Graphics-2-Project\\Graphics-2-Project\\Assets\\Knight.fbx",
+		SBNumVerts);
 	for(int i = 0; i < SkyBoxVerts.size(); i++)
 	{
 
@@ -279,11 +284,14 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	D3D11_INPUT_ELEMENT_DESC vLayout[] = 
 	{
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "UV", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+
 	};
 
 	//Create the input layout
-	pDevice->CreateInputLayout(vLayout, 2, Trivial_VS, sizeof(Trivial_VS), &pInputLayout);
+	pDevice->CreateInputLayout(vLayout, 4, Trivial_VS, sizeof(Trivial_VS), &pInputLayout);
 
 
 
@@ -719,7 +727,7 @@ void APPLICATION::CheckInput()
 }
 
 
-bool APPLICATION::LoadFBX(vector<APPLICATION::SIMPLE_VERTEX>* output)
+bool APPLICATION::LoadFBX(vector<APPLICATION::SIMPLE_VERTEX>* output, string filename, int numVerts)
 {
 
 	if(pFBXManager == nullptr)
@@ -734,7 +742,7 @@ bool APPLICATION::LoadFBX(vector<APPLICATION::SIMPLE_VERTEX>* output)
 	FbxImporter* pImporter = FbxImporter::Create(pFBXManager, "");
 	FbxScene* pScene = FbxScene::Create(pFBXManager, "");
 
-	bool bSuccess = pImporter->Initialize("C:\\Users\\fullsail\\Documents\\GFX2\\Graphics-2-Project\\Graphics-2-Project\\Assets\\Knight.fbx",
+	bool bSuccess = pImporter->Initialize(filename.c_str(),
 		-1, pFBXManager->GetIOSettings());
 
 	if(bSuccess == false)
@@ -787,12 +795,50 @@ bool APPLICATION::LoadFBX(vector<APPLICATION::SIMPLE_VERTEX>* output)
 				for(unsigned int k = 0; k < nNumVertices; k++)
 				{
 					int nControlPointIndex = pMesh->GetPolygonVertex(j, k);
-
+					
 					SIMPLE_VERTEX vert;
-				
+					//Set vert positions
 					vert.position.x = (float)pVertices[nControlPointIndex].mData[0];
 					vert.position.y = (float)pVertices[nControlPointIndex].mData[1];
 					vert.position.z = (float)pVertices[nControlPointIndex].mData[2];
+
+					//create variables to get the vert normals
+					FbxVector4 normal;
+					pMesh->GetPolygonVertexNormal(j, k, normal);
+					
+					//Set the vert normals
+					vert.normal.x = normal.mData[0];
+					vert.normal.y = normal.mData[1];
+					vert.normal.z = normal.mData[2];
+
+					FbxStringList UVSetNameList;
+					pMesh->GetUVSetNames(UVSetNameList);
+
+					const char* UVSetName = UVSetNameList.GetStringAt(0);
+					const FbxGeometryElementUV* UVElement = pMesh->GetElementUV(UVSetName);
+
+					if(!UVElement)
+					{
+						continue;
+					}
+
+					if(UVElement->GetMappingMode() != FbxGeometryElement::eByPolygonVertex &&
+						UVElement->GetMappingMode() != FbxGeometryElement::eByControlPoint)
+					{
+						return false;
+					}
+
+					const bool UseIndex = UVElement->GetReferenceMode() != FbxGeometryElement::eDirect;
+					const int IndexCount = (UseIndex) ? UVElement->GetIndexArray().GetCount() : 0;
+
+
+					FbxVector2 UV;
+
+					int UVIndex = pMesh->GetTextureUVIndex(j, k);
+					UV = UVElement->GetDirectArray().GetAt(UVIndex);
+
+					vert.UV.x = UV.mData[0];
+					vert.UV.y = UV.mData[1];
 
 					output->push_back(vert);
 				}
@@ -800,5 +846,6 @@ bool APPLICATION::LoadFBX(vector<APPLICATION::SIMPLE_VERTEX>* output)
 
 		}
 	}
+
 	return true;
 }

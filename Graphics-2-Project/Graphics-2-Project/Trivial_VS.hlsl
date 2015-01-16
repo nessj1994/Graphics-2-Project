@@ -44,11 +44,15 @@ struct V_IN
 {
 	float3 posL : POSITION;
 	float4 color : COLOR;
+	float3 normal : NORMAL;
+	float2 uv : UV;
 };
 struct V_OUT
 {
 	float4 posH : SV_POSITION;
 	float4 color : COLOR;
+	float3 normal : NORMAL;
+	float2 uv : UV;
 };
 cbuffer OBJECT : register(b0)
 {
@@ -70,6 +74,8 @@ V_OUT main(V_IN input)
 	// TODO: Move into view space, then projection space
 	localH = mul(localH, viewMatrix);
 	localH = mul(localH, projectionMatrix);
+	output.normal = mul(input.normal, worldMatrix);
+	output.normal = normalize(output.normal);
 	output.posH = localH;
 
 	output.color = input.color;
