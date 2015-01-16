@@ -14,6 +14,7 @@
 #include "XTime.h"
 #include <vector>
 #include <fbxsdk.h>
+#include "DDSTextureLoader.h"
 //Add xtimeclass here
 
 using namespace std;
@@ -48,6 +49,8 @@ class APPLICATION
 	IDXGISwapChain* pSwapChain = nullptr;
 	ID3D11Resource* pBackBuffer;
 	D3D11_VIEWPORT vp;
+	ID3D11ShaderResourceView* pSRView;
+	ID3D11SamplerState* pSamplerState;
 
 	//Create Buffer variables
 
@@ -237,8 +240,28 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	//Create the skybox
 	
 	LoadFBX(&SkyBoxVerts,
-		"C:\\Users\\fullsail\\Documents\\GFX2\\Graphics-2-Project\\Graphics-2-Project\\Assets\\Knight.fbx",
+		"..\\Assets\\Knight.fbx",
 		SBNumVerts);
+
+	hr = CreateDDSTextureFromFile(pDevice, L"../Assets/GoldKnight.dds", NULL, &pSRView);
+	D3D11_SAMPLER_DESC descSampleState;
+	ZeroMemory(&descSampleState, sizeof(descSampleState));
+	descSampleState.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+	descSampleState.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
+	descSampleState.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
+	descSampleState.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+	descSampleState.MipLODBias = 0.0f;
+	descSampleState.MaxAnisotropy = 1;
+	descSampleState.ComparisonFunc = D3D11_COMPARISON_ALWAYS;
+	descSampleState.BorderColor[0] = 0;
+	descSampleState.BorderColor[1] = 0;
+	descSampleState.BorderColor[2] = 0;
+	descSampleState.BorderColor[3] = 0;
+	descSampleState.MinLOD = 0;
+	descSampleState.MaxLOD = D3D11_FLOAT32_MAX;
+
+	pDevice->CreateSamplerState(&descSampleState, &pSamplerState);
+
 	for(int i = 0; i < SkyBoxVerts.size(); i++)
 	{
 
@@ -561,6 +584,8 @@ bool APPLICATION::Run()
 	//Set the shaders to be used
 	pDeviceContext->VSSetShader(pVertexShader, NULL, 0);
 	pDeviceContext->PSSetShader(pPixelShader, NULL, 0);
+	pDeviceContext->PSSetShaderResources(0, 1, &pSRView);
+	pDeviceContext->PSSetSamplers(0, 1, &pSamplerState);
 
 	//Set the input layout to be used
 	pDeviceContext->IASetInputLayout(pInputLayout);
@@ -569,12 +594,8 @@ bool APPLICATION::Run()
 	pDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 
-	
+	//Draw the object	
 	pDeviceContext->Draw(17544, 0);
-
-
-	
-
 
 
 
@@ -626,7 +647,8 @@ bool APPLICATION::ShutDown()
 	pDSV->Release();
 	pPixelShader->Release();
 	pVertexShader->Release();
-
+	pSRView->Release();
+	pSamplerState->Release();
 	//pVertexBuffer->Release();
 	//pPixelShader->Release();
 	//pVertexShader->Release();
@@ -838,7 +860,7 @@ bool APPLICATION::LoadFBX(vector<APPLICATION::SIMPLE_VERTEX>* output, string fil
 					UV = UVElement->GetDirectArray().GetAt(UVIndex);
 
 					vert.UV.x = UV.mData[0];
-					vert.UV.y = UV.mData[1];
+					vert.UV.y = 1.0f - UV.mData[1];
 
 					output->push_back(vert);
 				}

@@ -1,45 +1,5 @@
 #pragma pack_matrix(row_major)
 
-//struct INPUT_VERTEX
-//{
-//	float4 coordinate : POSITION;
-//	float4 color : COLOR;
-//};
-//
-//struct OUTPUT_VERTEX
-//{
-//	float4 colorOut : COLOR;
-//	float4 projectedCoordinate : SV_POSITION;
-//};
-//
-//// TODO: PART 3 STEP 2a
-//cbuffer THIS_IS_VRAM : register( b0 )
-//{
-//	float4 constantColor;
-//	float2 constantOffset;
-//	float2 padding;
-//};
-//
-//OUTPUT_VERTEX main( INPUT_VERTEX fromVertexBuffer )
-//{
-//	OUTPUT_VERTEX sendToRasterizer = (OUTPUT_VERTEX)0;
-//	sendToRasterizer.projectedCoordinate.w = 1;
-//	
-//	sendToRasterizer.projectedCoordinate.xy = fromVertexBuffer.coordinate.xy;
-//		
-//	// TODO : PART 4 STEP 4
-//	/*sendToRasterizer.projectedCoordinate.xy += constantOffset;*/
-//	
-//	// TODO : PART 3 STEP 7
-//	sendToRasterizer.colorOut = constantColor;
-//	// END PART 3
-//
-//	return sendToRasterizer;
-//}
-
-
-
-
 struct V_IN
 {
 	float3 posL : POSITION;
@@ -77,7 +37,7 @@ V_OUT main(V_IN input)
 	output.normal = mul(input.normal, worldMatrix);
 	output.normal = normalize(output.normal);
 	output.posH = localH;
-
+	output.uv = input.uv;
 	output.color = input.color;
 	
 	return output; // send projected vertex to the rasterizer stage
