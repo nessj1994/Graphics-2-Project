@@ -15,6 +15,7 @@
 #include <vector>
 #include <fbxsdk.h>
 #include "DDSTextureLoader.h"
+
 //Add xtimeclass here
 
 using namespace std;
@@ -29,6 +30,9 @@ using namespace DirectX;
 //include shaders
 #include "Trivial_PS.csh"
 #include "Trivial_VS.csh"
+#include "Skybox_VS.csh"
+#include "Skybox_PS.csh"
+
 
 //Create the backbuffer size
 #define BACKBUFFER_WIDTH 1280
@@ -49,8 +53,10 @@ class APPLICATION
 	IDXGISwapChain* pSwapChain = nullptr;
 	ID3D11Resource* pBackBuffer;
 	D3D11_VIEWPORT vp;
+	ID3D11Texture2D* pSBTexture;
 	ID3D11ShaderResourceView* pSRView;
 	ID3D11SamplerState* pSamplerState;
+	ID3D11ShaderResourceView* pCharacterSRV;
 
 	//Create Buffer variables
 
@@ -68,15 +74,23 @@ class APPLICATION
 	unsigned int SBNumFaces;
 	vector<SIMPLE_VERTEX> SkyBoxVerts;
 
+	//Character Model Vertex buffer 
+	ID3D11Buffer* pCharacterVertexBuffer;
+	vector<SIMPLE_VERTEX> CharacterVerts;
+
 	//Constant Buffers
 	ID3D11Buffer* pObjectCBuffer;
 	ID3D11Buffer* pSceneCBuffer;
 	ID3D11Buffer* pIndexBuffer;
 	ID3D11Buffer* pSkyboxCBuffer;
-	
+	ID3D11Buffer* pCharacterCBuffer;
+
+
 	//Depth Buffer
 	ID3D11Texture2D* pDepthBuffer;
 	ID3D11DepthStencilView* pDSV;
+	ID3D11DepthStencilState* pDSLessEqual;
+
 
 	
 	//Create Timer
@@ -96,9 +110,13 @@ class APPLICATION
 	ID3D11PixelShader* pPixelShader = nullptr;
 
 	//Skybox Shaders
-	//ID3D11VertexShader* pSkybox_VS = nullptr;
-	//ID3D11PixelShader* pSkybox_PS = nullptr;
+	ID3D11VertexShader* pSkybox_VS = nullptr;
+	ID3D11PixelShader* pSkybox_PS = nullptr;
 	//ID3D11ShaderResourceView* pSBResourceView;
+
+	ID3D11RasterizerState* pRSCullNone;
+	ID3D11RasterizerState* pRSDefault;
+
 
 	//Constant buffer for rendered object
 	struct OBJECT
@@ -116,6 +134,7 @@ class APPLICATION
 	OBJECT star;
 	SCENE scene;
 	OBJECT SkyBox;
+	OBJECT character;
 
 
 	//Model loading variables
@@ -240,10 +259,17 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	//Create the skybox
 	
 	LoadFBX(&SkyBoxVerts,
-		"..\\Assets\\Knight.fbx",
+		"..\\Assets\\Sphere.fbx",
 		SBNumVerts);
+	
 
-	hr = CreateDDSTextureFromFile(pDevice, L"../Assets/GoldKnight.dds", NULL, &pSRView);
+	hr = CreateDDSTextureFromFile(pDevice, L"../Assets/Skybox.dds", NULL, &pSRView);
+	
+	LoadFBX(&CharacterVerts, "..\\Assets\\Jinx.fbx", SBNumVerts);
+
+	hr = CreateDDSTextureFromFile(pDevice, L"../Assets/Jinx.dds", NULL, &pCharacterSRV);
+
+	//Create the sample state description
 	D3D11_SAMPLER_DESC descSampleState;
 	ZeroMemory(&descSampleState, sizeof(descSampleState));
 	descSampleState.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -260,7 +286,27 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	descSampleState.MinLOD = 0;
 	descSampleState.MaxLOD = D3D11_FLOAT32_MAX;
 
+	//Use the description to make the sample state
 	pDevice->CreateSamplerState(&descSampleState, &pSamplerState);
+
+
+	D3D11_RASTERIZER_DESC descRaster;
+	ZeroMemory(&descRaster, sizeof(descRaster));
+	descRaster.FillMode = D3D11_FILL_SOLID;
+	descRaster.CullMode = D3D11_CULL_NONE;
+	descRaster.FrontCounterClockwise = true;
+	descRaster.DepthClipEnable = true;
+
+	hr = pDevice->CreateRasterizerState(&descRaster, &pRSCullNone);
+
+	D3D11_RASTERIZER_DESC descDefRaster;
+	ZeroMemory(&descDefRaster, sizeof(descRaster));
+	descRaster.FillMode = D3D11_FILL_SOLID;
+	descRaster.CullMode = D3D11_CULL_NONE;
+	descRaster.FrontCounterClockwise = false;
+	descRaster.DepthClipEnable = true;
+
+	hr = pDevice->CreateRasterizerState(&descRaster, &pRSDefault);
 
 	for(int i = 0; i < SkyBoxVerts.size(); i++)
 	{
@@ -282,13 +328,16 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 
 	}
 
-	//Describe the back buffer
+
+	//Describe the Skybox vert buffer
 	D3D11_BUFFER_DESC descSBVertBuffer;
 	ZeroMemory(&descSBVertBuffer, sizeof(descSBVertBuffer));
 	descSBVertBuffer.Usage = D3D11_USAGE_IMMUTABLE;
 	descSBVertBuffer.BindFlags = D3D11_BIND_VERTEX_BUFFER;
 	descSBVertBuffer.CPUAccessFlags = NULL;
-	descSBVertBuffer.ByteWidth = sizeof(SIMPLE_VERTEX)* 17544;
+	descSBVertBuffer.ByteWidth = sizeof(SIMPLE_VERTEX)* 2280;
+
+
 
 	//Create buffer initial data
 	D3D11_SUBRESOURCE_DATA data;
@@ -299,10 +348,30 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	//create the vertex buffer
 	hr = pDevice->CreateBuffer(&descSBVertBuffer, &data, &pSBVertexBuffer);
 
+
+
+	//Describe the character vert buffer
+	D3D11_BUFFER_DESC descCharVertBuffer;
+	ZeroMemory(&descSBVertBuffer, sizeof(descCharVertBuffer));
+	descCharVertBuffer.Usage = D3D11_USAGE_IMMUTABLE;
+	descCharVertBuffer.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+	descCharVertBuffer.CPUAccessFlags = NULL;
+	descCharVertBuffer.ByteWidth = sizeof(SIMPLE_VERTEX) * 50000;
+
+
+	//Create the character vert buffer
+	//Create buffer initial data
+	D3D11_SUBRESOURCE_DATA chardata;
+	ZeroMemory(&chardata, sizeof(chardata));
+	data.pSysMem = &CharacterVerts;
+	hr = pDevice->CreateBuffer(&descCharVertBuffer, &chardata, &pCharacterVertexBuffer);
+
 	//Create the shaders
 	pDevice->CreateVertexShader(Trivial_VS, sizeof(Trivial_VS), NULL, &pVertexShader);
 	pDevice->CreatePixelShader(Trivial_PS, sizeof(Trivial_PS), NULL, &pPixelShader);
-
+	pDevice->CreateVertexShader(Skybox_VS, sizeof(Skybox_VS), NULL, &pSkybox_VS);
+	pDevice->CreatePixelShader(Skybox_PS, sizeof(Skybox_PS), NULL, &pSkybox_PS);
+	
 	//Setup the input layout
 	D3D11_INPUT_ELEMENT_DESC vLayout[] = 
 	{
@@ -327,6 +396,15 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	//create the object const buffer
 	pDevice->CreateBuffer(&descSkyboxConstBuffer, NULL, &pSkyboxCBuffer);
 
+
+	D3D11_BUFFER_DESC descCharConstBuffer;
+	ZeroMemory(&descCharConstBuffer, sizeof(descCharConstBuffer));
+	descCharConstBuffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	descCharConstBuffer.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+	descCharConstBuffer.Usage = D3D11_USAGE_DYNAMIC;
+	descCharConstBuffer.ByteWidth = sizeof(OBJECT);
+	//create the object const buffer
+	pDevice->CreateBuffer(&descCharConstBuffer, NULL, &pCharacterCBuffer);
 
 	//Describe the scene constant buffer
 	D3D11_BUFFER_DESC descSceneConstBuffer;
@@ -477,6 +555,8 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 
 	pDevice->CreateBuffer(&descObjectConstBuffer, NULL, &pObjectCBuffer);
 
+	
+
 
 	dt = 0;
 
@@ -516,13 +596,12 @@ bool APPLICATION::Run()
 		0, 0, 0, 1
 	};
 	
-	XMStoreFloat4x4(&SkyBox.worldMatrix, XMMatrixIdentity());
+	XMStoreFloat4x4(&character.worldMatrix, XMMatrixIdentity());
+	XMStoreFloat4x4(&character.worldMatrix, XMMatrixRotationY(dt));
+	
 	//Rotate world matrix on y axis
 	XMStoreFloat4x4(&star.worldMatrix, XMMatrixRotationY(dt));
-	XMMATRIX SkyboxWorldMatrix;
-	XMLoadFloat4x4(&SkyBox.worldMatrix);
-	SkyboxWorldMatrix = XMMatrixRotationY(dt);
-	XMStoreFloat4x4(&SkyBox.worldMatrix, XMMatrixMultiply(SkyboxWorldMatrix, XMMatrixTranslation(-2, -2, 0)));
+
 
 	//Create the scene's view matrix 
 	scene.viewMatrix =
@@ -535,7 +614,10 @@ bool APPLICATION::Run()
 
 	//Create the view matrix
 	XMMATRIX sceneViewMat = XMLoadFloat4x4(&scene.viewMatrix);
-	//XMVECTOR sceneViewDet = XMMatrixDeterminant(sceneViewMat);
+	XMVECTOR sceneViewDet = XMMatrixDeterminant(sceneViewMat);
+	
+
+
 	
 	//Check for input to move the camera
 	CheckInput();
@@ -548,12 +630,15 @@ bool APPLICATION::Run()
 	sceneViewMat = XMMatrixMultiply(sceneViewMat, XMMatrixTranslation(translateX, 0.0f, translateZ));
 	
 
-	XMStoreFloat4x4(&scene.viewMatrix, XMMatrixInverse(0, sceneViewMat));
+	XMStoreFloat4x4(&scene.viewMatrix, XMMatrixInverse(&sceneViewDet, sceneViewMat));
 
+	FLOAT aspect_ratio = BACKBUFFER_WIDTH / (float)BACKBUFFER_HEIGHT;
 
-	XMStoreFloat4x4( &scene.projMatrix,XMMatrixPerspectiveFovLH(3.14/3.0f, (float)(BACKBUFFER_WIDTH) / (float)(BACKBUFFER_HEIGHT), 0.01f, 1000.0f));
+	XMStoreFloat4x4( &scene.projMatrix,XMMatrixPerspectiveFovLH(XMConvertToRadians(65.0f), aspect_ratio, 0.01f, 1000.0f));
 
+	XMStoreFloat4x4(&SkyBox.worldMatrix, XMMatrixTranslation(translateX, 0.0f, translateZ));
 	
+
 
 	//Memcpy data from const buffer structs into Vertex shader const buffers
 	//Takes data from cpu to gpu
@@ -582,8 +667,8 @@ bool APPLICATION::Run()
 	pDeviceContext->IASetVertexBuffers(0, 1, &pSBVertexBuffer, stride, offsets);
 
 	//Set the shaders to be used
-	pDeviceContext->VSSetShader(pVertexShader, NULL, 0);
-	pDeviceContext->PSSetShader(pPixelShader, NULL, 0);
+	pDeviceContext->VSSetShader(pSkybox_VS, NULL, 0);
+	pDeviceContext->PSSetShader(pSkybox_PS, NULL, 0);
 	pDeviceContext->PSSetShaderResources(0, 1, &pSRView);
 	pDeviceContext->PSSetSamplers(0, 1, &pSamplerState);
 
@@ -592,12 +677,12 @@ bool APPLICATION::Run()
 
 	//Set the type of primitive topology to be used
 	pDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
+	pDeviceContext->RSSetState(this->pRSCullNone);
 
 	//Draw the object	
-	pDeviceContext->Draw(17544, 0);
+	pDeviceContext->Draw(2280, 0);
 
-
+	pDeviceContext->ClearDepthStencilView(pDSV, D3D11_CLEAR_DEPTH, 1.0f, NULL);
 
 
 	//Set values for star draw call
@@ -617,7 +702,30 @@ bool APPLICATION::Run()
 
 	pDeviceContext->VSSetConstantBuffers(0, 1, &pObjectCBuffer);
 
+	//Change shaders 
+	pDeviceContext->VSSetShader(pVertexShader, NULL, 0);
+	pDeviceContext->PSSetShader(pPixelShader, NULL, 0);
+	ID3D11ShaderResourceView* NullSRV = nullptr;
+	pDeviceContext->PSSetShaderResources(0, 1, &NullSRV);
+	pDeviceContext->RSSetState(pRSDefault);
+
+
 	pDeviceContext->DrawIndexed(TriVerts, 0, 0);
+
+	//Start character model drawing
+
+	//Memcpy the characters data from cpu to gpu
+	D3D11_MAPPED_SUBRESOURCE CharSubRes;
+	pDeviceContext->Map(pCharacterCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
+		0, &CharSubRes);
+	memcpy(CharSubRes.pData, &character, sizeof(OBJECT));
+	pDeviceContext->Unmap(pCharacterCBuffer, 0);
+
+	//Set values for drawing for new model
+	pDeviceContext->PSSetShaderResources(0, 1, &pCharacterSRV);
+	pDeviceContext->VSGetConstantBuffers(0, 1, &pCharacterCBuffer);
+	pDeviceContext->IASetVertexBuffers(0, 1, &pCharacterVertexBuffer, stride, offsets);
+	pDeviceContext->Draw(50000, 0);
 
 	//Present to the screen
 	pSwapChain->Present(0, 0);
@@ -649,26 +757,14 @@ bool APPLICATION::ShutDown()
 	pVertexShader->Release();
 	pSRView->Release();
 	pSamplerState->Release();
-	//pVertexBuffer->Release();
-	//pPixelShader->Release();
-	//pVertexShader->Release();
-	//pObjectCBuffer->Release();
-	//pInputLayout->Release();
-	//pSceneCBuffer->Release();
-	//pIndexBuffer->Release();
-	//pDepthBuffer->Release();
-	//pStarVertBuffer->Release();
-	//pSkyboxCBuffer->Release();
-	//pSBVertexBuffer->Release();
-	//pDSV->Release();
-	//
-	//ID3D11Debug* d3dDebug = nullptr;
-	//pDevice->QueryInterface(__uuidof(ID3D11Debug), reinterpret_cast<void**>(&d3dDebug));
+	pSkybox_PS->Release();
+	pSkybox_VS->Release();
+	pRSCullNone->Release();
+	pCharacterCBuffer->Release();
+	pCharacterSRV->Release();
+	pCharacterVertexBuffer->Release();
 
-	//
-
-	//d3dDebug->ReportLiveDeviceObjects(D3D11_RLDO_DETAIL);
-
+//	pDSLessEqual->Release();
 
 	pDevice->Release();
 	UnregisterClass(L"DirectXApplication", application);

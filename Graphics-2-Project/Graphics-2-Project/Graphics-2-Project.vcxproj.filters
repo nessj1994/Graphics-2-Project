@@ -28,6 +28,8 @@
   <ItemGroup>
     <FxCompile Include="Trivial_PS.hlsl" />
     <FxCompile Include="Trivial_VS.hlsl" />
+    <FxCompile Include="Skybox_VS.hlsl" />
+    <FxCompile Include="Skybox_PS.hlsl" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="XTime.h">
