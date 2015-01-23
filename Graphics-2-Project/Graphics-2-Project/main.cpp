@@ -99,6 +99,7 @@ class APPLICATION
 
 
 	float translateZ = 0.0f;
+	float translateY = 0.0f;
 	float translateX = 0.0f;
 	float rotationY = 0.0f;
 	float rotationX = 0.0f;
@@ -265,9 +266,9 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 
 	hr = CreateDDSTextureFromFile(pDevice, L"../Assets/Skybox.dds", NULL, &pSRView);
 	
-	LoadFBX(&CharacterVerts, "..\\Assets\\Jinx.fbx", SBNumVerts);
+	LoadFBX(&CharacterVerts, "..\\Assets\\Knight.fbx", SBNumVerts);
 
-	hr = CreateDDSTextureFromFile(pDevice, L"../Assets/Jinx.dds", NULL, &pCharacterSRV);
+	hr = CreateDDSTextureFromFile(pDevice, L"../Assets/GoldKnight.dds", NULL, &pCharacterSRV);
 
 	//Create the sample state description
 	D3D11_SAMPLER_DESC descSampleState;
@@ -352,18 +353,18 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 
 	//Describe the character vert buffer
 	D3D11_BUFFER_DESC descCharVertBuffer;
-	ZeroMemory(&descSBVertBuffer, sizeof(descCharVertBuffer));
+	ZeroMemory(&descCharVertBuffer, sizeof(descCharVertBuffer));
 	descCharVertBuffer.Usage = D3D11_USAGE_IMMUTABLE;
 	descCharVertBuffer.BindFlags = D3D11_BIND_VERTEX_BUFFER;
 	descCharVertBuffer.CPUAccessFlags = NULL;
-	descCharVertBuffer.ByteWidth = sizeof(SIMPLE_VERTEX) * 50000;
+	descCharVertBuffer.ByteWidth = sizeof(SIMPLE_VERTEX) * 17544;
 
 
 	//Create the character vert buffer
 	//Create buffer initial data
 	D3D11_SUBRESOURCE_DATA chardata;
 	ZeroMemory(&chardata, sizeof(chardata));
-	data.pSysMem = &CharacterVerts;
+	chardata.pSysMem = &CharacterVerts[0];
 	hr = pDevice->CreateBuffer(&descCharVertBuffer, &chardata, &pCharacterVertexBuffer);
 
 	//Create the shaders
@@ -596,7 +597,7 @@ bool APPLICATION::Run()
 		0, 0, 0, 1
 	};
 	
-	XMStoreFloat4x4(&character.worldMatrix, XMMatrixIdentity());
+	XMStoreFloat4x4(&character.worldMatrix, XMMatrixMultiply(XMMatrixIdentity(), XMMatrixScaling(0.1f, 0.1f, 0.1f)));
 	XMStoreFloat4x4(&character.worldMatrix, XMMatrixRotationY(dt));
 	
 	//Rotate world matrix on y axis
@@ -627,7 +628,7 @@ bool APPLICATION::Run()
 	sceneViewMat = XMMatrixMultiply(sceneViewMat, XMMatrixRotationX(rotationX));
 
 	//Apply camera translations
-	sceneViewMat = XMMatrixMultiply(sceneViewMat, XMMatrixTranslation(translateX, 0.0f, translateZ));
+	sceneViewMat = XMMatrixMultiply(sceneViewMat, XMMatrixTranslation(translateX, translateY, translateZ));
 	
 
 	XMStoreFloat4x4(&scene.viewMatrix, XMMatrixInverse(&sceneViewDet, sceneViewMat));
@@ -636,7 +637,7 @@ bool APPLICATION::Run()
 
 	XMStoreFloat4x4( &scene.projMatrix,XMMatrixPerspectiveFovLH(XMConvertToRadians(65.0f), aspect_ratio, 0.01f, 1000.0f));
 
-	XMStoreFloat4x4(&SkyBox.worldMatrix, XMMatrixTranslation(translateX, 0.0f, translateZ));
+	XMStoreFloat4x4(&SkyBox.worldMatrix, XMMatrixTranslation(translateX, translateY, translateZ));
 	
 
 
@@ -725,7 +726,7 @@ bool APPLICATION::Run()
 	pDeviceContext->PSSetShaderResources(0, 1, &pCharacterSRV);
 	pDeviceContext->VSGetConstantBuffers(0, 1, &pCharacterCBuffer);
 	pDeviceContext->IASetVertexBuffers(0, 1, &pCharacterVertexBuffer, stride, offsets);
-	pDeviceContext->Draw(50000, 0);
+	pDeviceContext->Draw(17544, 0);
 
 	//Present to the screen
 	pSwapChain->Present(0, 0);
@@ -824,6 +825,14 @@ void APPLICATION::CheckInput()
 	else if(GetAsyncKeyState('D'))
 	{
 		translateX += 1 * timer.Delta();
+	}
+	if(GetAsyncKeyState(VK_SPACE))
+	{
+		translateY += 2 * timer.Delta();
+	}
+	else if(GetAsyncKeyState('X'))
+	{
+		translateY -= 2 * timer.Delta();
 	}
 
 	if(GetAsyncKeyState('Q'))
