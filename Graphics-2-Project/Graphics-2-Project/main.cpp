@@ -15,6 +15,9 @@
 #include <vector>
 #include <fbxsdk.h>
 #include "DDSTextureLoader.h"
+#include <mutex>
+#include <condition_variable>
+#include <thread>
 
 //Add xtimeclass here
 
@@ -49,14 +52,16 @@ class APPLICATION
 	//Create DirectX device variables
 	ID3D11Device* pDevice; 
 	ID3D11DeviceContext* pDeviceContext;
+	ID3D11DeviceContext* pDeferredContext = nullptr;
+	ID3D11DeviceContext* pGeoDeferredContext = nullptr;
 	ID3D11RenderTargetView* pRTV;
 	IDXGISwapChain* pSwapChain = nullptr;
 	ID3D11Resource* pBackBuffer;
 	D3D11_VIEWPORT vp;
-	ID3D11Texture2D* pSBTexture;
 	ID3D11ShaderResourceView* pSRView;
 	ID3D11SamplerState* pSamplerState;
 	ID3D11ShaderResourceView* pCharacterSRV;
+	ID3D11ShaderResourceView* NullSRV = nullptr;
 
 	//Create Buffer variables
 
@@ -89,7 +94,7 @@ class APPLICATION
 	//Depth Buffer
 	ID3D11Texture2D* pDepthBuffer;
 	ID3D11DepthStencilView* pDSV;
-	ID3D11DepthStencilState* pDSLessEqual;
+	//ID3D11DepthStencilState* pDSLessEqual;
 
 
 	
@@ -139,8 +144,22 @@ class APPLICATION
 
 
 	//Model loading variables
-	FbxManager* pFBXManager = nullptr;
+	
 
+
+	//MULTITHREADED LOADING VARIABLES
+	unsigned int numModels = 2;
+	unsigned int numModelsLoaded = 0;
+	mutex ModelsLoadedMutex;
+	condition_variable modelCountCondition;
+
+	//MULTITHREADED RENDERING VARIABLES
+	ID3D11CommandList* pSBCommandList = nullptr;
+	ID3D11CommandList* pGeometryCommandList;
+	unsigned int numDrawCalls = 0;
+	unsigned int numToDraw = 1;
+	mutex DrawCallsMutex;
+	condition_variable DrawCountCondition;
 
 public:
 	//Create the application and the functions it will use to run and shutdown
@@ -159,6 +178,11 @@ public:
 	};
 
 	bool LoadFBX(vector<SIMPLE_VERTEX>* output, string filename, int numVerts);
+	static void ModelThreadEntry(APPLICATION* which);
+	static void TextureThreadEntry(APPLICATION* which);
+	static void SBDrawThreadEntry(APPLICATION* which);
+	static void GeometryDrawThreadEntry(APPLICATION* which);
+
 
 };
 
@@ -209,8 +233,8 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	SwapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 	SwapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
 	SwapChainDesc.OutputWindow = window;
-	SwapChainDesc.SampleDesc.Count = 1;
-	SwapChainDesc.SampleDesc.Quality = 0;
+	SwapChainDesc.SampleDesc.Count = 4;
+	SwapChainDesc.SampleDesc.Quality = 8;
 	SwapChainDesc.Windowed = true;
 
 	//Array of feature levels
@@ -225,7 +249,7 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	};
 
 
-	unsigned int flag = D3D11_CREATE_DEVICE_SINGLETHREADED;
+	unsigned int flag = 0;
 
 #ifdef _DEBUG
 	flag |= D3D11_CREATE_DEVICE_DEBUG;
@@ -236,6 +260,10 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 		0, 0, D3D11_SDK_VERSION, &SwapChainDesc,
 		&pSwapChain, &pDevice, 0, &pDeviceContext
 		);
+
+
+	hr = pDevice->CreateDeferredContext(NULL, &pDeferredContext);
+	hr = pDevice->CreateDeferredContext(NULL, &pGeoDeferredContext);
 
 	//set the buffer
 	hr = pSwapChain->GetBuffer(0, __uuidof(pBackBuffer), reinterpret_cast<void**>(&pBackBuffer));
@@ -252,23 +280,24 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	vp.MinDepth = 0;
 	vp.MaxDepth = 1;
 
-	
 
-
-
-
+	//MULTITHREADED LOADING OF MODELS 
 	//Create the skybox
-	
-	LoadFBX(&SkyBoxVerts,
-		"..\\Assets\\Sphere.fbx",
-		SBNumVerts);
-	
+	thread tempThreadModel(ModelThreadEntry, this);
+	tempThreadModel.detach();
 
-	hr = CreateDDSTextureFromFile(pDevice, L"../Assets/Skybox.dds", NULL, &pSRView);
-	
-	LoadFBX(&CharacterVerts, "..\\Assets\\Knight.fbx", SBNumVerts);
+	//MULTITHREADED LOADING OF TEXTURES
+	//Create Knight model
+	thread tempThreadTexture(TextureThreadEntry, this);
+	tempThreadTexture.detach();
 
-	hr = CreateDDSTextureFromFile(pDevice, L"../Assets/GoldKnight.dds", NULL, &pCharacterSRV);
+	//WAIT FOR ALL MODELS AND TEXTURES TO BE LOADED BEFORE CONTINUING
+	unique_lock<mutex> ulCountCondition(ModelsLoadedMutex);
+	modelCountCondition.wait(ulCountCondition, [&](){
+		return numModelsLoaded == numModels;
+	});
+	ulCountCondition.unlock();
+
 
 	//Create the sample state description
 	D3D11_SAMPLER_DESC descSampleState;
@@ -288,7 +317,7 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	descSampleState.MaxLOD = D3D11_FLOAT32_MAX;
 
 	//Use the description to make the sample state
-	pDevice->CreateSamplerState(&descSampleState, &pSamplerState);
+	hr = pDevice->CreateSamplerState(&descSampleState, &pSamplerState);
 
 
 	D3D11_RASTERIZER_DESC descRaster;
@@ -368,10 +397,10 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	hr = pDevice->CreateBuffer(&descCharVertBuffer, &chardata, &pCharacterVertexBuffer);
 
 	//Create the shaders
-	pDevice->CreateVertexShader(Trivial_VS, sizeof(Trivial_VS), NULL, &pVertexShader);
-	pDevice->CreatePixelShader(Trivial_PS, sizeof(Trivial_PS), NULL, &pPixelShader);
-	pDevice->CreateVertexShader(Skybox_VS, sizeof(Skybox_VS), NULL, &pSkybox_VS);
-	pDevice->CreatePixelShader(Skybox_PS, sizeof(Skybox_PS), NULL, &pSkybox_PS);
+	hr = pDevice->CreateVertexShader(Trivial_VS, sizeof(Trivial_VS), NULL, &pVertexShader);
+	hr = pDevice->CreatePixelShader(Trivial_PS, sizeof(Trivial_PS), NULL, &pPixelShader);
+	hr = pDevice->CreateVertexShader(Skybox_VS, sizeof(Skybox_VS), NULL, &pSkybox_VS);
+	hr = pDevice->CreatePixelShader(Skybox_PS, sizeof(Skybox_PS), NULL, &pSkybox_PS);
 	
 	//Setup the input layout
 	D3D11_INPUT_ELEMENT_DESC vLayout[] = 
@@ -384,10 +413,10 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	};
 
 	//Create the input layout
-	pDevice->CreateInputLayout(vLayout, 4, Trivial_VS, sizeof(Trivial_VS), &pInputLayout);
+	hr = pDevice->CreateInputLayout(vLayout, 4, Trivial_VS, sizeof(Trivial_VS), &pInputLayout);
 
 
-
+	//Describe a const buffer for the skybox data
 	D3D11_BUFFER_DESC descSkyboxConstBuffer;
 	ZeroMemory(&descSkyboxConstBuffer, sizeof(descSkyboxConstBuffer));
 	descSkyboxConstBuffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
@@ -395,9 +424,9 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	descSkyboxConstBuffer.Usage = D3D11_USAGE_DYNAMIC;
 	descSkyboxConstBuffer.ByteWidth = sizeof(OBJECT);
 	//create the object const buffer
-	pDevice->CreateBuffer(&descSkyboxConstBuffer, NULL, &pSkyboxCBuffer);
+	hr = pDevice->CreateBuffer(&descSkyboxConstBuffer, NULL, &pSkyboxCBuffer);
 
-
+	//Describe a const buffer for the character model data
 	D3D11_BUFFER_DESC descCharConstBuffer;
 	ZeroMemory(&descCharConstBuffer, sizeof(descCharConstBuffer));
 	descCharConstBuffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
@@ -405,7 +434,7 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	descCharConstBuffer.Usage = D3D11_USAGE_DYNAMIC;
 	descCharConstBuffer.ByteWidth = sizeof(OBJECT);
 	//create the object const buffer
-	pDevice->CreateBuffer(&descCharConstBuffer, NULL, &pCharacterCBuffer);
+	hr = pDevice->CreateBuffer(&descCharConstBuffer, NULL, &pCharacterCBuffer);
 
 	//Describe the scene constant buffer
 	D3D11_BUFFER_DESC descSceneConstBuffer;
@@ -416,7 +445,7 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	descSceneConstBuffer.ByteWidth = sizeof(SCENE);
 
 	//Create the scene const buffer
-	pDevice->CreateBuffer(&descSceneConstBuffer, NULL, &pSceneCBuffer);
+	hr = pDevice->CreateBuffer(&descSceneConstBuffer, NULL, &pSceneCBuffer);
 	
 
 	//Describe the depth buffer
@@ -428,21 +457,26 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	descDepthBuffer.ArraySize = 1;
 	descDepthBuffer.BindFlags = D3D11_BIND_DEPTH_STENCIL;
 	descDepthBuffer.Format = DXGI_FORMAT_D32_FLOAT;
-	descDepthBuffer.SampleDesc.Count = 1;
-	descDepthBuffer.SampleDesc.Quality = 0;
+	descDepthBuffer.SampleDesc.Count = 4;
+	descDepthBuffer.SampleDesc.Quality = 8;
 	descDepthBuffer.Usage = D3D11_USAGE_DEFAULT;
 
 
 	//Create the depth buffer
-	pDevice->CreateTexture2D(&descDepthBuffer, NULL, &pDepthBuffer);
+	hr = pDevice->CreateTexture2D(&descDepthBuffer, NULL, &pDepthBuffer);
 
-	pDevice->CreateDepthStencilView(pDepthBuffer, NULL, &pDSV);
+	D3D11_DEPTH_STENCIL_VIEW_DESC descDSV;
+	ZeroMemory(&descDSV, sizeof(descDSV));
+	descDSV.Format = DXGI_FORMAT_D32_FLOAT;
+	descDSV.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DMS;
+	descDSV.Texture2D.MipSlice = 0;
 
-
-	//CREATE STAR OBJECT
 
 	//Create the depth stencil view
+	hr = pDevice->CreateDepthStencilView(pDepthBuffer, &descDSV, &pDSV);
 
+
+	//CREATE STAR OBJECT VERT BUFFER
 	SIMPLE_VERTEX verts[12];
 
 	//Create the star
@@ -502,7 +536,7 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 		pStarVertBuffer = nullptr;
 	}
 
-	pDevice->CreateBuffer(&descStarVertBuffer, &data, &pStarVertBuffer);
+	hr = pDevice->CreateBuffer(&descStarVertBuffer, &data, &pStarVertBuffer);
 
 
 	//Setup the star vertex winding
@@ -544,7 +578,7 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	indexInitData.SysMemSlicePitch = 0;
 
 	//create the index buffer
-	pDevice->CreateBuffer(&descIndexBuffer, &indexInitData, &pIndexBuffer);
+	hr = pDevice->CreateBuffer(&descIndexBuffer, &indexInitData, &pIndexBuffer);
 
 	//describe the object constant buffer
 	D3D11_BUFFER_DESC descObjectConstBuffer;
@@ -554,10 +588,10 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	descObjectConstBuffer.Usage = D3D11_USAGE_DYNAMIC;
 	descObjectConstBuffer.ByteWidth = sizeof(OBJECT);
 
-	pDevice->CreateBuffer(&descObjectConstBuffer, NULL, &pObjectCBuffer);
+	hr = pDevice->CreateBuffer(&descObjectConstBuffer, NULL, &pObjectCBuffer);
 
 	
-
+	pSBCommandList = nullptr;
 
 	dt = 0;
 
@@ -572,10 +606,10 @@ bool APPLICATION::Run()
 	dt += timer.Delta();
 
 	//Set Render Target
-	pDeviceContext->OMSetRenderTargets(1, &pRTV, pDSV);
+	pDeferredContext->OMSetRenderTargets(1, &pRTV, pDSV);
 
 	//Set viewports
-	pDeviceContext->RSSetViewports(1, &vp);
+	pDeferredContext->RSSetViewports(1, &vp);
 
 	//Set screen clear color
 	//Blood red
@@ -585,8 +619,8 @@ bool APPLICATION::Run()
 	};
 
 	//Clear Screen
-	pDeviceContext->ClearRenderTargetView(pRTV, clearColor);
-	pDeviceContext->ClearDepthStencilView(pDSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
+	pDeferredContext->ClearRenderTargetView(pRTV, clearColor);
+	pDeferredContext->ClearDepthStencilView(pDSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
 
 	//Create the star's world matrix 
 	star.worldMatrix =
@@ -597,6 +631,7 @@ bool APPLICATION::Run()
 		0, 0, 0, 1
 	};
 	
+	//Create and manipulate the character models world matrix for its rotation and scaling
 	XMStoreFloat4x4(&character.worldMatrix, XMMatrixMultiply(XMMatrixIdentity(), XMMatrixScaling(0.1f, 0.1f, 0.1f)));
 	XMStoreFloat4x4(&character.worldMatrix, XMMatrixRotationY(dt));
 	
@@ -640,94 +675,128 @@ bool APPLICATION::Run()
 	XMStoreFloat4x4(&SkyBox.worldMatrix, XMMatrixTranslation(translateX, translateY, translateZ));
 	
 
-
 	//Memcpy data from const buffer structs into Vertex shader const buffers
 	//Takes data from cpu to gpu
 	//Object 
 	D3D11_MAPPED_SUBRESOURCE pSubRes;
-	pDeviceContext->Map(pSkyboxCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
+	pDeferredContext->Map(pSkyboxCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
 		0, &pSubRes);
 	memcpy(pSubRes.pData, &SkyBox, sizeof(OBJECT));
-	pDeviceContext->Unmap(pSkyboxCBuffer, 0);
+	pDeferredContext->Unmap(pSkyboxCBuffer, 0);
 
 
 	//Do the same for the scene
 	D3D11_MAPPED_SUBRESOURCE pSubResScene;
-	pDeviceContext->Map(pSceneCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
+	pDeferredContext->Map(pSceneCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
 		0, &pSubResScene);
 	memcpy(pSubResScene.pData, &scene, sizeof(SCENE));
-	pDeviceContext->Unmap(pSceneCBuffer, 0);
+	pDeferredContext->Unmap(pSceneCBuffer, 0);
 
-	//Link buffers
-	pDeviceContext->VSSetConstantBuffers(0, 1, &pSkyboxCBuffer);
-	pDeviceContext->VSSetConstantBuffers(1, 1, &pSceneCBuffer);
+	pDeferredContext->VSSetConstantBuffers(0, 1, &pSkyboxCBuffer);
+	pDeferredContext->VSSetConstantBuffers(1, 1, &pSceneCBuffer);
 
-	//Set the vertex buffer for our object
+	/*thread SBRenderThread(SBDrawThreadEntry, this);
+	SBRenderThread.detach();*/
+
+	////WAIT FOR ALL MODELS AND TEXTURES TO BE LOADED BEFORE CONTINUING
+	//unique_lock<mutex> ulCountCondition(DrawCallsMutex);
+	//modelCountCondition.wait(ulCountCondition, [&](){
+	//	return numDrawCalls == numToDraw;
+	//});
+	//ulCountCondition.unlock();
+	
+	////Link buffers
+
+	//
+	//
+	////Set the vertex buffer for our object
 	unsigned int stride[] = { sizeof(SIMPLE_VERTEX) };
 	unsigned int offsets[] = { 0 };
-	pDeviceContext->IASetVertexBuffers(0, 1, &pSBVertexBuffer, stride, offsets);
+	pDeferredContext->IASetVertexBuffers(0, 1, &pSBVertexBuffer, stride, offsets);
 
 	//Set the shaders to be used
-	pDeviceContext->VSSetShader(pSkybox_VS, NULL, 0);
-	pDeviceContext->PSSetShader(pSkybox_PS, NULL, 0);
-	pDeviceContext->PSSetShaderResources(0, 1, &pSRView);
-	pDeviceContext->PSSetSamplers(0, 1, &pSamplerState);
+	pDeferredContext->VSSetShader(pSkybox_VS, NULL, 0);
+	pDeferredContext->PSSetShader(pSkybox_PS, NULL, 0);
+	pDeferredContext->PSSetShaderResources(0, 1, &pSRView);
+	pDeferredContext->PSSetSamplers(0, 1, &pSamplerState);
 
 	//Set the input layout to be used
-	pDeviceContext->IASetInputLayout(pInputLayout);
+	pDeferredContext->IASetInputLayout(pInputLayout);
 
 	//Set the type of primitive topology to be used
-	pDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-	pDeviceContext->RSSetState(this->pRSCullNone);
+	pDeferredContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	pDeferredContext->RSSetState(this->pRSCullNone);
+	pDeferredContext->Draw(2280, 0);
 
+	pDeferredContext->ClearDepthStencilView(pDSV, D3D11_CLEAR_DEPTH, 1.0f, NULL);
+	pDeferredContext->FinishCommandList(true, &pSBCommandList);
 	//Draw the object	
-	pDeviceContext->Draw(2280, 0);
+	if(pSBCommandList)
+	{
+		pDeviceContext->ExecuteCommandList(pSBCommandList, false);
+		pSBCommandList->Release();
+		pSBCommandList = nullptr;
+	}
 
-	pDeviceContext->ClearDepthStencilView(pDSV, D3D11_CLEAR_DEPTH, 1.0f, NULL);
 
 
 	//Set values for star draw call
+	//Set Render Target
+	pGeoDeferredContext->OMSetRenderTargets(1, &pRTV, pDSV);
 
-	pDeviceContext->IASetIndexBuffer(pIndexBuffer, DXGI_FORMAT_R32_UINT, 0);
+	//Set viewports
+	pGeoDeferredContext->RSSetViewports(1, &vp);
 
-	pDeviceContext->IASetVertexBuffers(0, 1, &pStarVertBuffer, stride, offsets);
+	pGeoDeferredContext->IASetIndexBuffer(pIndexBuffer, DXGI_FORMAT_R32_UINT, 0);
+	pGeoDeferredContext->IASetVertexBuffers(0, 1, &pStarVertBuffer, stride, offsets);
 
 	//Memcpy the stars data from cpu to gpu
 	D3D11_MAPPED_SUBRESOURCE pStarSubRes;
-	pDeviceContext->Map(pObjectCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
+	pGeoDeferredContext->Map(pObjectCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
 		0, &pStarSubRes);
 	memcpy(pStarSubRes.pData, &star, sizeof(OBJECT));
-	pDeviceContext->Unmap(pObjectCBuffer, 0);
+	pGeoDeferredContext->Unmap(pObjectCBuffer, 0);
 
-	//Create the star's constant buffer
-
-	pDeviceContext->VSSetConstantBuffers(0, 1, &pObjectCBuffer);
-
+	//set the star's constant buffer
+	pGeoDeferredContext->VSSetConstantBuffers(0, 1, &pObjectCBuffer);
+	pGeoDeferredContext->VSSetConstantBuffers(1, 1, &pSceneCBuffer);
+	
 	//Change shaders 
-	pDeviceContext->VSSetShader(pVertexShader, NULL, 0);
-	pDeviceContext->PSSetShader(pPixelShader, NULL, 0);
-	ID3D11ShaderResourceView* NullSRV = nullptr;
-	pDeviceContext->PSSetShaderResources(0, 1, &NullSRV);
-	pDeviceContext->RSSetState(pRSDefault);
+	pGeoDeferredContext->VSSetShader(pVertexShader, NULL, 0);
+	pGeoDeferredContext->PSSetShader(pPixelShader, NULL, 0);
+	pGeoDeferredContext->PSSetShaderResources(0, 1, &NullSRV);
+	pGeoDeferredContext->PSSetSamplers(0, 1, &pSamplerState);
+	//Input layout
+	pGeoDeferredContext->IASetInputLayout(pInputLayout);
+	//Rasterizer State
+	pGeoDeferredContext->RSSetState(pRSDefault);
+	//Primitive topology
+	pGeoDeferredContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-
-	pDeviceContext->DrawIndexed(TriVerts, 0, 0);
+	pGeoDeferredContext->DrawIndexed(TriVerts, 0, 0);
 
 	//Start character model drawing
-
 	//Memcpy the characters data from cpu to gpu
 	D3D11_MAPPED_SUBRESOURCE CharSubRes;
-	pDeviceContext->Map(pCharacterCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
+	pGeoDeferredContext->Map(pCharacterCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
 		0, &CharSubRes);
 	memcpy(CharSubRes.pData, &character, sizeof(OBJECT));
-	pDeviceContext->Unmap(pCharacterCBuffer, 0);
+	pGeoDeferredContext->Unmap(pCharacterCBuffer, 0);
 
 	//Set values for drawing for new model
-	pDeviceContext->PSSetShaderResources(0, 1, &pCharacterSRV);
-	pDeviceContext->VSGetConstantBuffers(0, 1, &pCharacterCBuffer);
-	pDeviceContext->IASetVertexBuffers(0, 1, &pCharacterVertexBuffer, stride, offsets);
-	pDeviceContext->Draw(17544, 0);
+	pGeoDeferredContext->PSSetShaderResources(0, 1, &pCharacterSRV);
+	pGeoDeferredContext->VSSetConstantBuffers(0, 1, &pCharacterCBuffer);
+	pGeoDeferredContext->VSSetConstantBuffers(1, 1, &pSceneCBuffer);
 
+	pGeoDeferredContext->IASetVertexBuffers(0, 1, &pCharacterVertexBuffer, stride, offsets);
+	pGeoDeferredContext->Draw(17544, 0);
+
+	pGeoDeferredContext->FinishCommandList(false, &pGeometryCommandList);
+
+	pDeviceContext->ExecuteCommandList(pGeometryCommandList, false);
+	pGeometryCommandList->Release();
+	pGeometryCommandList = nullptr;
+	
 	//Present to the screen
 	pSwapChain->Present(0, 0);
 
@@ -764,6 +833,11 @@ bool APPLICATION::ShutDown()
 	pCharacterCBuffer->Release();
 	pCharacterSRV->Release();
 	pCharacterVertexBuffer->Release();
+	pRSDefault->Release();
+	pDeferredContext->Release();
+
+	
+	
 
 //	pDSLessEqual->Release();
 
@@ -779,6 +853,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdLi
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wparam, LPARAM lparam);
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPTSTR, int)
 {
+
+
+	
 	srand(unsigned int(time(0)));
 	APPLICATION myApp(hInstance, (WNDPROC)WndProc);
 	MSG msg; ZeroMemory(&msg, sizeof(msg));
@@ -856,15 +933,15 @@ void APPLICATION::CheckInput()
 
 bool APPLICATION::LoadFBX(vector<APPLICATION::SIMPLE_VERTEX>* output, string filename, int numVerts)
 {
-
-	if(pFBXManager == nullptr)
-	{
+	FbxManager* pFBXManager = nullptr;
 		pFBXManager = FbxManager::Create();
+	//if(pFBXManager == nullptr)
+	//{
 
 		FbxIOSettings* pIOSettings = FbxIOSettings::Create(pFBXManager, IOSROOT);
 		pFBXManager->SetIOSettings(pIOSettings);
 
-	}
+	//}
 
 	FbxImporter* pImporter = FbxImporter::Create(pFBXManager, "");
 	FbxScene* pScene = FbxScene::Create(pFBXManager, "");
@@ -975,4 +1052,88 @@ bool APPLICATION::LoadFBX(vector<APPLICATION::SIMPLE_VERTEX>* output, string fil
 	}
 
 	return true;
+}
+
+
+void APPLICATION::ModelThreadEntry(APPLICATION* which)
+{
+	
+	which->LoadFBX(&which->SkyBoxVerts,
+		"..\\Assets\\Sphere.fbx",
+		which->SBNumVerts);
+	which->LoadFBX(&which->CharacterVerts, 
+		"..\\Assets\\Knight.fbx",
+		which->SBNumVerts);
+
+
+
+
+	which->ModelsLoadedMutex.lock();
+	which->numModelsLoaded++;
+	which->modelCountCondition.notify_all();
+	which->ModelsLoadedMutex.unlock();
+}
+
+
+void APPLICATION::TextureThreadEntry(APPLICATION* which)
+{
+	
+
+	CreateDDSTextureFromFile(which->pDevice, L"../Assets/GoldKnight.dds", NULL, &which->pCharacterSRV);
+	CreateDDSTextureFromFile(which->pDevice, L"../Assets/Skybox.dds", NULL, &which->pSRView);
+
+
+	which->ModelsLoadedMutex.lock();
+	which->numModelsLoaded++;
+	which->modelCountCondition.notify_all();
+	which->ModelsLoadedMutex.unlock();
+}
+
+void APPLICATION::SBDrawThreadEntry(APPLICATION* which)
+{
+
+	//Memcpy data from const buffer structs into Vertex shader const buffers
+	//Takes data from cpu to gpu
+	//Object 
+
+	if(which->pSBCommandList)
+		return;
+
+
+
+	//Set the vertex buffer for our object
+	unsigned int stride[] = { sizeof(SIMPLE_VERTEX) };
+	unsigned int offsets[] = { 0 };
+	which->pDeferredContext->IASetVertexBuffers(0, 1, &which->pSBVertexBuffer, stride, offsets);
+
+	//Set the shaders to be used
+	which->pDeferredContext->VSSetShader(which->pSkybox_VS, NULL, 0);
+	which->pDeferredContext->PSSetShader(which->pSkybox_PS, NULL, 0);
+	which->pDeferredContext->PSSetShaderResources(0, 1, &which->pSRView);
+	which->pDeferredContext->PSSetSamplers(0, 1, &which->pSamplerState);
+
+	//Set the input layout to be used
+	which->pDeferredContext->IASetInputLayout(which->pInputLayout);
+
+	//Set the type of primitive topology to be used
+	which->pDeferredContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	which->pDeferredContext->RSSetState(which->pRSCullNone);
+
+	//Draw the object	
+	which->pDeferredContext->Draw(2280, 0);
+
+	which->pDeferredContext->ClearDepthStencilView(which->pDSV, D3D11_CLEAR_DEPTH, 1.0f, NULL);
+
+	which->pDeferredContext->FinishCommandList(false, &which->pSBCommandList);
+
+	//which->DrawCallsMutex.lock();
+	//which->numDrawCalls++;
+	//which->DrawCountCondition.notify_all();
+	//which->DrawCallsMutex.unlock();
+}
+
+void APPLICATION::GeometryDrawThreadEntry(APPLICATION* which)
+{
+
+
 }
