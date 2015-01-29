@@ -30,6 +30,7 @@
     <FxCompile Include="Trivial_VS.hlsl" />
     <FxCompile Include="Skybox_VS.hlsl" />
     <FxCompile Include="Skybox_PS.hlsl" />
+    <FxCompile Include="GeometryShader.hlsl" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="XTime.h">

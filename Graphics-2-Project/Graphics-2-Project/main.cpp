@@ -35,6 +35,7 @@ using namespace DirectX;
 #include "Trivial_VS.csh"
 #include "Skybox_VS.csh"
 #include "Skybox_PS.csh"
+#include "GeometryShader.csh"
 
 
 //Create the backbuffer size
@@ -90,6 +91,11 @@ class APPLICATION
 	ID3D11Buffer* pSkyboxCBuffer;
 	ID3D11Buffer* pCharacterCBuffer;
 
+	//Plane 
+	ID3D11Buffer* pPlaneCBuffer;
+	ID3D11Buffer* pPlaneVertBuffer = nullptr;
+	vector<SIMPLE_VERTEX> planeVerts;
+
 
 	//Depth Buffer
 	ID3D11Texture2D* pDepthBuffer;
@@ -114,6 +120,7 @@ class APPLICATION
 	//Basic shaders
 	ID3D11VertexShader* pVertexShader = nullptr;
 	ID3D11PixelShader* pPixelShader = nullptr;
+	ID3D11GeometryShader* pGeometryShader = nullptr;
 
 	//Skybox Shaders
 	ID3D11VertexShader* pSkybox_VS = nullptr;
@@ -141,6 +148,8 @@ class APPLICATION
 	SCENE scene;
 	OBJECT SkyBox;
 	OBJECT character;
+	OBJECT plane;
+
 
 
 	//Model loading variables
@@ -358,6 +367,22 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 
 	}
 
+	//Create plane vertex
+	SIMPLE_VERTEX point;
+	point.position.x = 0;
+	point.position.y = 0;
+	point.position.z = 0;
+
+
+	point.rgba.x = 1.0f;
+	point.rgba.y = 1.0f;
+	point.rgba.z = 1.0f;
+	point.rgba.w = 1.0f;
+
+
+
+	planeVerts.push_back(point);
+
 
 	//Describe the Skybox vert buffer
 	D3D11_BUFFER_DESC descSBVertBuffer;
@@ -396,11 +421,40 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	chardata.pSysMem = &CharacterVerts[0];
 	hr = pDevice->CreateBuffer(&descCharVertBuffer, &chardata, &pCharacterVertexBuffer);
 
+
+	//Describe the plane vert buffer
+	D3D11_BUFFER_DESC descPlaneVertBuffer;
+	ZeroMemory(&descPlaneVertBuffer, sizeof(descPlaneVertBuffer));
+	descPlaneVertBuffer.Usage = D3D11_USAGE_IMMUTABLE;
+	descPlaneVertBuffer.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+	descPlaneVertBuffer.CPUAccessFlags = NULL;
+	descPlaneVertBuffer.ByteWidth = sizeof(SIMPLE_VERTEX);
+
+
+	//Create the plane vert buffer
+	//Create buffer initial data
+	D3D11_SUBRESOURCE_DATA planedata;
+	ZeroMemory(&planedata, sizeof(planedata));
+	planedata.pSysMem = &planeVerts[0];
+	hr = pDevice->CreateBuffer(&descPlaneVertBuffer, &planedata, &pPlaneVertBuffer);
+
+	//Describe a const buffer for the plane data
+	D3D11_BUFFER_DESC descPlaneConstBuffer;
+	ZeroMemory(&descPlaneConstBuffer, sizeof(descPlaneConstBuffer));
+	descPlaneConstBuffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	descPlaneConstBuffer.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+	descPlaneConstBuffer.Usage = D3D11_USAGE_DYNAMIC;
+	descPlaneConstBuffer.ByteWidth = sizeof(OBJECT);
+	//create the object const buffer
+	hr = pDevice->CreateBuffer(&descPlaneConstBuffer, NULL, &pPlaneCBuffer);
+
+
 	//Create the shaders
 	hr = pDevice->CreateVertexShader(Trivial_VS, sizeof(Trivial_VS), NULL, &pVertexShader);
 	hr = pDevice->CreatePixelShader(Trivial_PS, sizeof(Trivial_PS), NULL, &pPixelShader);
 	hr = pDevice->CreateVertexShader(Skybox_VS, sizeof(Skybox_VS), NULL, &pSkybox_VS);
 	hr = pDevice->CreatePixelShader(Skybox_PS, sizeof(Skybox_PS), NULL, &pSkybox_PS);
+	hr = pDevice->CreateGeometryShader(GeometryShader, sizeof(GeometryShader), NULL, &pGeometryShader);
 	
 	//Setup the input layout
 	D3D11_INPUT_ELEMENT_DESC vLayout[] = 
@@ -652,8 +706,6 @@ bool APPLICATION::Run()
 	XMMATRIX sceneViewMat = XMLoadFloat4x4(&scene.viewMatrix);
 	XMVECTOR sceneViewDet = XMMatrixDeterminant(sceneViewMat);
 	
-
-
 	
 	//Check for input to move the camera
 	CheckInput();
@@ -668,12 +720,17 @@ bool APPLICATION::Run()
 
 	XMStoreFloat4x4(&scene.viewMatrix, XMMatrixInverse(&sceneViewDet, sceneViewMat));
 
+
+
 	FLOAT aspect_ratio = BACKBUFFER_WIDTH / (float)BACKBUFFER_HEIGHT;
 
 	XMStoreFloat4x4( &scene.projMatrix,XMMatrixPerspectiveFovLH(XMConvertToRadians(65.0f), aspect_ratio, 0.01f, 1000.0f));
 
 	XMStoreFloat4x4(&SkyBox.worldMatrix, XMMatrixTranslation(translateX, translateY, translateZ));
 	
+	//Create matrix for the plane
+	XMStoreFloat4x4(&plane.worldMatrix, XMMatrixTranslation(-scene.viewMatrix._41, -scene.viewMatrix._42, -scene.viewMatrix._43));
+
 
 	//Memcpy data from const buffer structs into Vertex shader const buffers
 	//Takes data from cpu to gpu
@@ -695,21 +752,8 @@ bool APPLICATION::Run()
 	pDeferredContext->VSSetConstantBuffers(0, 1, &pSkyboxCBuffer);
 	pDeferredContext->VSSetConstantBuffers(1, 1, &pSceneCBuffer);
 
-	/*thread SBRenderThread(SBDrawThreadEntry, this);
-	SBRenderThread.detach();*/
 
-	////WAIT FOR ALL MODELS AND TEXTURES TO BE LOADED BEFORE CONTINUING
-	//unique_lock<mutex> ulCountCondition(DrawCallsMutex);
-	//modelCountCondition.wait(ulCountCondition, [&](){
-	//	return numDrawCalls == numToDraw;
-	//});
-	//ulCountCondition.unlock();
-	
-	////Link buffers
-
-	//
-	//
-	////Set the vertex buffer for our object
+	//Set the vertex buffer for our object
 	unsigned int stride[] = { sizeof(SIMPLE_VERTEX) };
 	unsigned int offsets[] = { 0 };
 	pDeferredContext->IASetVertexBuffers(0, 1, &pSBVertexBuffer, stride, offsets);
@@ -739,59 +783,9 @@ bool APPLICATION::Run()
 	}
 
 
+	thread GeometryDrawThread(GeometryDrawThreadEntry, this);
+	GeometryDrawThread.join();
 
-	//Set values for star draw call
-	//Set Render Target
-	pGeoDeferredContext->OMSetRenderTargets(1, &pRTV, pDSV);
-
-	//Set viewports
-	pGeoDeferredContext->RSSetViewports(1, &vp);
-
-	pGeoDeferredContext->IASetIndexBuffer(pIndexBuffer, DXGI_FORMAT_R32_UINT, 0);
-	pGeoDeferredContext->IASetVertexBuffers(0, 1, &pStarVertBuffer, stride, offsets);
-
-	//Memcpy the stars data from cpu to gpu
-	D3D11_MAPPED_SUBRESOURCE pStarSubRes;
-	pGeoDeferredContext->Map(pObjectCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
-		0, &pStarSubRes);
-	memcpy(pStarSubRes.pData, &star, sizeof(OBJECT));
-	pGeoDeferredContext->Unmap(pObjectCBuffer, 0);
-
-	//set the star's constant buffer
-	pGeoDeferredContext->VSSetConstantBuffers(0, 1, &pObjectCBuffer);
-	pGeoDeferredContext->VSSetConstantBuffers(1, 1, &pSceneCBuffer);
-	
-	//Change shaders 
-	pGeoDeferredContext->VSSetShader(pVertexShader, NULL, 0);
-	pGeoDeferredContext->PSSetShader(pPixelShader, NULL, 0);
-	pGeoDeferredContext->PSSetShaderResources(0, 1, &NullSRV);
-	pGeoDeferredContext->PSSetSamplers(0, 1, &pSamplerState);
-	//Input layout
-	pGeoDeferredContext->IASetInputLayout(pInputLayout);
-	//Rasterizer State
-	pGeoDeferredContext->RSSetState(pRSDefault);
-	//Primitive topology
-	pGeoDeferredContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-	pGeoDeferredContext->DrawIndexed(TriVerts, 0, 0);
-
-	//Start character model drawing
-	//Memcpy the characters data from cpu to gpu
-	D3D11_MAPPED_SUBRESOURCE CharSubRes;
-	pGeoDeferredContext->Map(pCharacterCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
-		0, &CharSubRes);
-	memcpy(CharSubRes.pData, &character, sizeof(OBJECT));
-	pGeoDeferredContext->Unmap(pCharacterCBuffer, 0);
-
-	//Set values for drawing for new model
-	pGeoDeferredContext->PSSetShaderResources(0, 1, &pCharacterSRV);
-	pGeoDeferredContext->VSSetConstantBuffers(0, 1, &pCharacterCBuffer);
-	pGeoDeferredContext->VSSetConstantBuffers(1, 1, &pSceneCBuffer);
-
-	pGeoDeferredContext->IASetVertexBuffers(0, 1, &pCharacterVertexBuffer, stride, offsets);
-	pGeoDeferredContext->Draw(17544, 0);
-
-	pGeoDeferredContext->FinishCommandList(false, &pGeometryCommandList);
 
 	pDeviceContext->ExecuteCommandList(pGeometryCommandList, false);
 	pGeometryCommandList->Release();
@@ -835,6 +829,9 @@ bool APPLICATION::ShutDown()
 	pCharacterVertexBuffer->Release();
 	pRSDefault->Release();
 	pDeferredContext->Release();
+	pPlaneCBuffer->Release();
+	pPlaneVertBuffer->Release();
+	pGeometryShader->Release();
 
 	
 	
@@ -1096,44 +1093,123 @@ void APPLICATION::SBDrawThreadEntry(APPLICATION* which)
 	//Takes data from cpu to gpu
 	//Object 
 
-	if(which->pSBCommandList)
-		return;
+	//if(which->pSBCommandList)
+	//	return;
 
 
 
 	//Set the vertex buffer for our object
-	unsigned int stride[] = { sizeof(SIMPLE_VERTEX) };
-	unsigned int offsets[] = { 0 };
-	which->pDeferredContext->IASetVertexBuffers(0, 1, &which->pSBVertexBuffer, stride, offsets);
+	//unsigned int stride[] = { sizeof(SIMPLE_VERTEX) };
+	//unsigned int offsets[] = { 0 };
+	//which->pDeferredContext->IASetVertexBuffers(0, 1, &which->pSBVertexBuffer, stride, offsets);
 
-	//Set the shaders to be used
-	which->pDeferredContext->VSSetShader(which->pSkybox_VS, NULL, 0);
-	which->pDeferredContext->PSSetShader(which->pSkybox_PS, NULL, 0);
-	which->pDeferredContext->PSSetShaderResources(0, 1, &which->pSRView);
-	which->pDeferredContext->PSSetSamplers(0, 1, &which->pSamplerState);
+	////Set the shaders to be used
+	//which->pDeferredContext->VSSetShader(which->pSkybox_VS, NULL, 0);
+	//which->pDeferredContext->PSSetShader(which->pSkybox_PS, NULL, 0);
+	//which->pDeferredContext->PSSetShaderResources(0, 1, &which->pSRView);
+	//which->pDeferredContext->PSSetSamplers(0, 1, &which->pSamplerState);
 
-	//Set the input layout to be used
-	which->pDeferredContext->IASetInputLayout(which->pInputLayout);
+	////Set the input layout to be used
+	//which->pDeferredContext->IASetInputLayout(which->pInputLayout);
 
-	//Set the type of primitive topology to be used
-	which->pDeferredContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-	which->pDeferredContext->RSSetState(which->pRSCullNone);
+	////Set the type of primitive topology to be used
+	//which->pDeferredContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	//which->pDeferredContext->RSSetState(which->pRSCullNone);
 
-	//Draw the object	
-	which->pDeferredContext->Draw(2280, 0);
+	////Draw the object	
+	//which->pDeferredContext->Draw(2280, 0);
 
-	which->pDeferredContext->ClearDepthStencilView(which->pDSV, D3D11_CLEAR_DEPTH, 1.0f, NULL);
+	//which->pDeferredContext->ClearDepthStencilView(which->pDSV, D3D11_CLEAR_DEPTH, 1.0f, NULL);
 
-	which->pDeferredContext->FinishCommandList(false, &which->pSBCommandList);
+	//which->pDeferredContext->FinishCommandList(false, &which->pSBCommandList);
 
-	//which->DrawCallsMutex.lock();
-	//which->numDrawCalls++;
-	//which->DrawCountCondition.notify_all();
-	//which->DrawCallsMutex.unlock();
+	////which->DrawCallsMutex.lock();
+	////which->numDrawCalls++;
+	////which->DrawCountCondition.notify_all();
+	////which->DrawCallsMutex.unlock();
 }
 
 void APPLICATION::GeometryDrawThreadEntry(APPLICATION* which)
 {
 
+	unsigned int stride[] = { sizeof(SIMPLE_VERTEX) };
+	unsigned int offsets[] = { 0 };
 
+	//Set values for star draw call
+	//Set Render Target
+	which->pGeoDeferredContext->OMSetRenderTargets(1, &which->pRTV, which->pDSV);
+
+	//Set viewports
+	which->pGeoDeferredContext->RSSetViewports(1, &which->vp);
+
+	which->pGeoDeferredContext->IASetIndexBuffer(which->pIndexBuffer, DXGI_FORMAT_R32_UINT, 0);
+	which->pGeoDeferredContext->IASetVertexBuffers(0, 1, &which->pStarVertBuffer, stride, offsets);
+
+	//Memcpy the stars data from cpu to gpu
+	D3D11_MAPPED_SUBRESOURCE pStarSubRes;
+	which->pGeoDeferredContext->Map(which->pObjectCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
+		0, &pStarSubRes);
+	memcpy(pStarSubRes.pData, &which->star, sizeof(OBJECT));
+	which->pGeoDeferredContext->Unmap(which->pObjectCBuffer, 0);
+
+	//set the star's constant buffer
+	which->pGeoDeferredContext->VSSetConstantBuffers(0, 1, &which->pObjectCBuffer);
+	which->pGeoDeferredContext->VSSetConstantBuffers(1, 1, &which->pSceneCBuffer);
+
+	//Change shaders 
+	which->pGeoDeferredContext->VSSetShader(which->pVertexShader, NULL, 0);
+	which->pGeoDeferredContext->PSSetShader(which->pPixelShader, NULL, 0);
+	which->pGeoDeferredContext->PSSetShaderResources(0, 1, &which->NullSRV);
+	which->pGeoDeferredContext->PSSetSamplers(0, 1, &which->pSamplerState);
+	//Input layout
+	which->pGeoDeferredContext->IASetInputLayout(which->pInputLayout);
+	//Rasterizer State
+	which->pGeoDeferredContext->RSSetState(which->pRSDefault);
+	//Primitive topology
+	which->pGeoDeferredContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+	which->pGeoDeferredContext->DrawIndexed(which->TriVerts, 0, 0);
+
+	//Start character model drawing
+	//Memcpy the characters data from cpu to gpu
+	D3D11_MAPPED_SUBRESOURCE CharSubRes;
+	which->pGeoDeferredContext->Map(which->pCharacterCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
+		0, &CharSubRes);
+	memcpy(CharSubRes.pData, &which->character, sizeof(OBJECT));
+	which->pGeoDeferredContext->Unmap(which->pCharacterCBuffer, 0);
+
+	//Set values for drawing for new model
+	which->pGeoDeferredContext->PSSetShaderResources(0, 1, &which->pCharacterSRV);
+	which->pGeoDeferredContext->VSSetConstantBuffers(0, 1, &which->pCharacterCBuffer);
+	which->pGeoDeferredContext->VSSetConstantBuffers(1, 1, &which->pSceneCBuffer);
+
+	which->pGeoDeferredContext->IASetVertexBuffers(0, 1, &which->pCharacterVertexBuffer, stride, offsets);
+	which->pGeoDeferredContext->Draw(17544, 0);
+
+
+	//Start plane drawing
+	//Memcpy the planes data from cpu to gpu
+	D3D11_MAPPED_SUBRESOURCE PlaneSubRes;
+	which->pGeoDeferredContext->Map(which->pPlaneCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
+		0, &PlaneSubRes);
+	memcpy(PlaneSubRes.pData, &which->plane, sizeof(OBJECT));
+	which->pGeoDeferredContext->Unmap(which->pPlaneCBuffer, 0);
+
+	//Set values for drawing for new model
+	which->pGeoDeferredContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
+	which->pGeoDeferredContext->VSSetConstantBuffers(0, 1, &which->pPlaneCBuffer);
+	which->pGeoDeferredContext->VSSetConstantBuffers(1, 1, &which->pSceneCBuffer);
+	which->pGeoDeferredContext->GSSetShader(which->pGeometryShader, NULL, 0);
+	which->pGeoDeferredContext->GSSetConstantBuffers(0, 1, &which->pPlaneCBuffer);
+	which->pGeoDeferredContext->GSSetConstantBuffers(1, 1, &which->pSceneCBuffer);
+	which->pGeoDeferredContext->PSSetShader(which->pPixelShader, NULL, 0);
+	which->pGeoDeferredContext->PSSetShaderResources(0, 1, &which->NullSRV);
+	which->pGeoDeferredContext->PSSetSamplers(0, 1, &which->pSamplerState);
+
+
+	which->pGeoDeferredContext->IASetVertexBuffers(0, 1, &which->pPlaneVertBuffer, stride, offsets);
+	which->pGeoDeferredContext->Draw(1, 0);
+
+
+	which->pGeoDeferredContext->FinishCommandList(false, &which->pGeometryCommandList);
 }
