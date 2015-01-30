@@ -36,6 +36,7 @@ using namespace DirectX;
 #include "Skybox_VS.csh"
 #include "Skybox_PS.csh"
 #include "GeometryShader.csh"
+#include "MultiTexture_PS.csh"
 
 
 //Create the backbuffer size
@@ -62,6 +63,8 @@ class APPLICATION
 	ID3D11ShaderResourceView* pSRView;
 	ID3D11SamplerState* pSamplerState;
 	ID3D11ShaderResourceView* pCharacterSRV;
+	ID3D11ShaderResourceView* pMultiSRV1;
+	ID3D11ShaderResourceView* pMultiSRV2;
 	ID3D11ShaderResourceView* NullSRV = nullptr;
 
 	//Create Buffer variables
@@ -121,10 +124,12 @@ class APPLICATION
 	ID3D11VertexShader* pVertexShader = nullptr;
 	ID3D11PixelShader* pPixelShader = nullptr;
 	ID3D11GeometryShader* pGeometryShader = nullptr;
+	ID3D11PixelShader* pMultitexture_PS = nullptr;
 
 	//Skybox Shaders
 	ID3D11VertexShader* pSkybox_VS = nullptr;
 	ID3D11PixelShader* pSkybox_PS = nullptr;
+
 	//ID3D11ShaderResourceView* pSBResourceView;
 
 	ID3D11RasterizerState* pRSCullNone;
@@ -242,8 +247,8 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	SwapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 	SwapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
 	SwapChainDesc.OutputWindow = window;
-	SwapChainDesc.SampleDesc.Count = 4;
-	SwapChainDesc.SampleDesc.Quality = 8;
+	SwapChainDesc.SampleDesc.Count = 1;
+	SwapChainDesc.SampleDesc.Quality = 0;
 	SwapChainDesc.Windowed = true;
 
 	//Array of feature levels
@@ -455,6 +460,7 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	hr = pDevice->CreateVertexShader(Skybox_VS, sizeof(Skybox_VS), NULL, &pSkybox_VS);
 	hr = pDevice->CreatePixelShader(Skybox_PS, sizeof(Skybox_PS), NULL, &pSkybox_PS);
 	hr = pDevice->CreateGeometryShader(GeometryShader, sizeof(GeometryShader), NULL, &pGeometryShader);
+	hr = pDevice->CreatePixelShader(MultiTexture_PS, sizeof(MultiTexture_PS), NULL, &pMultitexture_PS);
 	
 	//Setup the input layout
 	D3D11_INPUT_ELEMENT_DESC vLayout[] = 
@@ -511,8 +517,8 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	descDepthBuffer.ArraySize = 1;
 	descDepthBuffer.BindFlags = D3D11_BIND_DEPTH_STENCIL;
 	descDepthBuffer.Format = DXGI_FORMAT_D32_FLOAT;
-	descDepthBuffer.SampleDesc.Count = 4;
-	descDepthBuffer.SampleDesc.Quality = 8;
+	descDepthBuffer.SampleDesc.Count = 1;
+	descDepthBuffer.SampleDesc.Quality = 0;
 	descDepthBuffer.Usage = D3D11_USAGE_DEFAULT;
 
 
@@ -522,7 +528,7 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	D3D11_DEPTH_STENCIL_VIEW_DESC descDSV;
 	ZeroMemory(&descDSV, sizeof(descDSV));
 	descDSV.Format = DXGI_FORMAT_D32_FLOAT;
-	descDSV.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DMS;
+	descDSV.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
 	descDSV.Texture2D.MipSlice = 0;
 
 
@@ -1078,6 +1084,8 @@ void APPLICATION::TextureThreadEntry(APPLICATION* which)
 
 	CreateDDSTextureFromFile(which->pDevice, L"../Assets/GoldKnight.dds", NULL, &which->pCharacterSRV);
 	CreateDDSTextureFromFile(which->pDevice, L"../Assets/Skybox.dds", NULL, &which->pSRView);
+	CreateDDSTextureFromFile(which->pDevice, L"../Assets/floor1.dds", NULL, &which->pMultiSRV1);
+	CreateDDSTextureFromFile(which->pDevice, L"../Assets/floor2.dds", NULL, &which->pMultiSRV2);
 
 
 	which->ModelsLoadedMutex.lock();
@@ -1202,9 +1210,15 @@ void APPLICATION::GeometryDrawThreadEntry(APPLICATION* which)
 	which->pGeoDeferredContext->GSSetShader(which->pGeometryShader, NULL, 0);
 	which->pGeoDeferredContext->GSSetConstantBuffers(0, 1, &which->pPlaneCBuffer);
 	which->pGeoDeferredContext->GSSetConstantBuffers(1, 1, &which->pSceneCBuffer);
-	which->pGeoDeferredContext->PSSetShader(which->pPixelShader, NULL, 0);
-	which->pGeoDeferredContext->PSSetShaderResources(0, 1, &which->NullSRV);
+	which->pGeoDeferredContext->PSSetShader(which->pMultitexture_PS, NULL, 0);
 	which->pGeoDeferredContext->PSSetSamplers(0, 1, &which->pSamplerState);
+	
+	ID3D11ShaderResourceView* textureArr[2] =
+	{
+		which->pMultiSRV1,
+		which->pMultiSRV2
+	};
+	which->pGeoDeferredContext->PSSetShaderResources(0, 2, textureArr);
 
 
 	which->pGeoDeferredContext->IASetVertexBuffers(0, 1, &which->pPlaneVertBuffer, stride, offsets);

@@ -1,3 +1,5 @@
+#pragma pack_matrix(row_major)
+
 struct GSOutput
 {
 	float4 pos : SV_POSITION;
@@ -40,28 +42,28 @@ void main(
 		{ (GSOutput)0 }
 	};
 
-	vertices[0].pos = float4(-100, 0, 100, 0);
-	vertices[0].color = float4(1.0f, 1.0f, 1.0f, 1.0f);
+	vertices[0].pos = float4(-50, -5, 50, 1);
+	vertices[0].color = float4(0.5f, 0.5f, 0.5f, 1.0f);
 	vertices[0].normal = float3(0, 1.0f, 0);
 	vertices[0].uv = float2 (0, 0);
 
 
-	vertices[1].pos = float4(100, 0, 100, 0);
-	vertices[1].color = float4(1.0f, 1.0f, 1.0f, 1.0f);
+	vertices[1].pos = float4(50, -5, 50, 1);
+	vertices[1].color = float4(0.5f, 0.5f, 0.5f, 1.0f);
 	vertices[1].normal = float3(0, 1.0f, 0);
-	vertices[1].uv = float2 (0, 0);
+	vertices[1].uv = float2 (1, 0);
 
 
-	vertices[2].pos = float4(-100, 0, -100, 0);
-	vertices[2].color = float4(1.0f, 1.0f, 1.0f, 1.0f);
+	vertices[2].pos = float4(-50, -5, -50, 1);
+	vertices[2].color = float4(0.5f, 0.5f, 0.5f, 1.0f);
 	vertices[2].normal = float3(0, 1.0f, 0);
-	vertices[2].uv = float2 (0, 0);
+	vertices[2].uv = float2 (0, 1);
 
 
-	vertices[3].pos = float4(100, 0, -100, 0);
-	vertices[3].color = float4(1.0f, 1.0f, 1.0f, 1.0f);
+	vertices[3].pos = float4(50, -5, -50, 1);
+	vertices[3].color = float4(0.05f, 0.5f, 0.5f, 1.0f);
 	vertices[3].normal = float3(0, 1.0f, 0);
-	vertices[3].uv = float2 (0, 0);
+	vertices[3].uv = float2 (1, 1);
 
 	for(unsigned int i = 0; i < 4; i++)
 	{
