@@ -255,8 +255,8 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	SwapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 	SwapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
 	SwapChainDesc.OutputWindow = window;
-	SwapChainDesc.SampleDesc.Count = 1;
-	SwapChainDesc.SampleDesc.Quality = 0;
+	SwapChainDesc.SampleDesc.Count = 4;
+	SwapChainDesc.SampleDesc.Quality = 8;
 	SwapChainDesc.Windowed = true;
 
 	//Array of feature levels
@@ -555,8 +555,8 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	descDepthBuffer.ArraySize = 1;
 	descDepthBuffer.BindFlags = D3D11_BIND_DEPTH_STENCIL;
 	descDepthBuffer.Format = DXGI_FORMAT_D32_FLOAT;
-	descDepthBuffer.SampleDesc.Count = 1;
-	descDepthBuffer.SampleDesc.Quality = 0;
+	descDepthBuffer.SampleDesc.Count = 4;
+	descDepthBuffer.SampleDesc.Quality = 8;
 	descDepthBuffer.Usage = D3D11_USAGE_DEFAULT;
 
 
@@ -566,7 +566,7 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	D3D11_DEPTH_STENCIL_VIEW_DESC descDSV;
 	ZeroMemory(&descDSV, sizeof(descDSV));
 	descDSV.Format = DXGI_FORMAT_D32_FLOAT;
-	descDSV.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+	descDSV.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DMS;
 	descDSV.Texture2D.MipSlice = 0;
 
 
@@ -771,14 +771,13 @@ bool APPLICATION::Run()
 
 	//Check for input to move the camera
 	CheckInput();
-
 	//Apply camera rotations
 	sceneViewMat = XMMatrixMultiply(sceneViewMat, XMMatrixRotationY(rotationY));
 	sceneViewMat = XMMatrixMultiply(sceneViewMat, XMMatrixRotationX(rotationX));
 
 	//Apply camera translations
-	sceneViewMat = XMMatrixMultiply(sceneViewMat, XMMatrixTranslation(translateX, translateY, translateZ));
-
+	sceneViewMat = XMMatrixMultiply(sceneViewMat, XMMatrixTranslation(translateX, translateY, translateZ) );
+	
 
 	//Apply camera2 rotations
 	scene2ViewMat = XMMatrixMultiply(scene2ViewMat, XMMatrixRotationX(XMConvertToRadians(65)));
@@ -807,8 +806,18 @@ bool APPLICATION::Run()
 	XMStoreFloat4x4(&scene.projMatrix, XMMatrixPerspectiveFovLH(XMConvertToRadians(65.0f), aspect_ratio, 0.01f, 1000.0f));
 	XMStoreFloat4x4(&scene2.projMatrix, XMMatrixPerspectiveFovLH(XMConvertToRadians(65.0f), aspect_ratio, 0.01f, 1000.0f));
 
+	XMMATRIX inverse_scene_view = XMMatrixInverse(NULL, XMLoadFloat4x4(&scene.viewMatrix));
+	XMVECTOR camera_pos = XMVectorSet(inverse_scene_view.r[3].m128_f32[0],
+		inverse_scene_view.r[3].m128_f32[1],
+		inverse_scene_view.r[3].m128_f32[2],
+		inverse_scene_view.r[3].m128_f32[3]);
 
-	XMStoreFloat4x4(&SkyBox.worldMatrix, XMMatrixTranslation(translateX, translateY, translateZ));
+	SkyBox.worldMatrix._41 = camera_pos.m128_f32[0];
+	SkyBox.worldMatrix._42 = camera_pos.m128_f32[1];
+	SkyBox.worldMatrix._43 = camera_pos.m128_f32[2];
+
+
+	XMStoreFloat4x4(&SkyBox.worldMatrix, XMMatrixTranslation(camera_pos.m128_f32[0], camera_pos.m128_f32[1], camera_pos.m128_f32[2]));
 
 	//Create matrix for the plane
 	XMStoreFloat4x4(&plane.worldMatrix, XMMatrixTranslation(-scene.viewMatrix._41, -scene.viewMatrix._42, -scene.viewMatrix._43));
