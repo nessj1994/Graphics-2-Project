@@ -52,7 +52,7 @@ class APPLICATION
 	HWND								window;
 
 	//Create DirectX device variables
-	ID3D11Device* pDevice; 
+	ID3D11Device* pDevice;
 	ID3D11DeviceContext* pDeviceContext;
 	ID3D11DeviceContext* pDeferredContext = nullptr;
 	ID3D11DeviceContext* pGeoDeferredContext = nullptr;
@@ -60,6 +60,8 @@ class APPLICATION
 	IDXGISwapChain* pSwapChain = nullptr;
 	ID3D11Resource* pBackBuffer;
 	D3D11_VIEWPORT vp;
+	D3D11_VIEWPORT vp2;
+	D3D11_VIEWPORT vp3;
 	ID3D11ShaderResourceView* pSRView;
 	ID3D11SamplerState* pSamplerState;
 	ID3D11ShaderResourceView* pCharacterSRV;
@@ -90,6 +92,7 @@ class APPLICATION
 	//Constant Buffers
 	ID3D11Buffer* pObjectCBuffer;
 	ID3D11Buffer* pSceneCBuffer;
+	ID3D11Buffer* pScene2CBuffer;
 	ID3D11Buffer* pIndexBuffer;
 	ID3D11Buffer* pSkyboxCBuffer;
 	ID3D11Buffer* pCharacterCBuffer;
@@ -106,7 +109,7 @@ class APPLICATION
 	//ID3D11DepthStencilState* pDSLessEqual;
 
 
-	
+
 	//Create Timer
 	XTime timer;
 	float dt;
@@ -119,7 +122,7 @@ class APPLICATION
 	float rotationX = 0.0f;
 
 	//Create the shaders
-	
+
 	//Basic shaders
 	ID3D11VertexShader* pVertexShader = nullptr;
 	ID3D11PixelShader* pPixelShader = nullptr;
@@ -151,6 +154,7 @@ class APPLICATION
 
 	OBJECT star;
 	SCENE scene;
+	SCENE scene2;
 	OBJECT SkyBox;
 	OBJECT character;
 	OBJECT plane;
@@ -158,7 +162,7 @@ class APPLICATION
 
 
 	//Model loading variables
-	
+
 
 
 	//MULTITHREADED LOADING VARIABLES
@@ -175,6 +179,8 @@ class APPLICATION
 	mutex DrawCallsMutex;
 	condition_variable DrawCountCondition;
 
+	bool bSplitScreen = true;
+
 public:
 	//Create the application and the functions it will use to run and shutdown
 	APPLICATION(HINSTANCE hinst, WNDPROC proc);
@@ -188,8 +194,10 @@ public:
 		XMFLOAT4 rgba;
 		XMFLOAT3 normal;
 		XMFLOAT2 UV;
-		
+
 	};
+
+
 
 	bool LoadFBX(vector<SIMPLE_VERTEX>* output, string filename, int numVerts);
 	static void ModelThreadEntry(APPLICATION* which);
@@ -281,18 +289,34 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 
 	//set the buffer
 	hr = pSwapChain->GetBuffer(0, __uuidof(pBackBuffer), reinterpret_cast<void**>(&pBackBuffer));
-	
+
 	//Create the render target view
 	hr = pDevice->CreateRenderTargetView(pBackBuffer, NULL, &pRTV);
 
 
 	//Set viewport data
 	vp.Height = BACKBUFFER_HEIGHT;
-	vp.Width = BACKBUFFER_WIDTH;
+	vp.Width = BACKBUFFER_WIDTH / 2;
 	vp.TopLeftX = 0;
 	vp.TopLeftY = 0;
 	vp.MinDepth = 0;
 	vp.MaxDepth = 1;
+
+	//Set viewport data
+	vp2.Height = BACKBUFFER_HEIGHT;
+	vp2.Width = BACKBUFFER_WIDTH / 2;
+	vp2.TopLeftX = BACKBUFFER_WIDTH / 2;
+	vp2.TopLeftY = 0;
+	vp2.MinDepth = 0;
+	vp2.MaxDepth = 1;
+
+	//Set viewport data
+	vp3.Height = BACKBUFFER_HEIGHT;
+	vp3.Width = BACKBUFFER_WIDTH;
+	vp3.TopLeftX = 0;
+	vp3.TopLeftY = 0;
+	vp3.MinDepth = 0;
+	vp3.MaxDepth = 1;
 
 
 	//MULTITHREADED LOADING OF MODELS 
@@ -355,12 +379,12 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	for(int i = 0; i < SkyBoxVerts.size(); i++)
 	{
 
-		if(i < SkyBoxVerts.size()/2)
+		if(i < SkyBoxVerts.size() / 2)
 		{
-		SkyBoxVerts[i].rgba.x = 0.1f;
-		SkyBoxVerts[i].rgba.y = 1.0f;
-		SkyBoxVerts[i].rgba.z = 0.1f;
-		SkyBoxVerts[i].rgba.w = 1.0f;
+			SkyBoxVerts[i].rgba.x = 0.1f;
+			SkyBoxVerts[i].rgba.y = 1.0f;
+			SkyBoxVerts[i].rgba.z = 0.1f;
+			SkyBoxVerts[i].rgba.w = 1.0f;
 		}
 		else
 		{
@@ -395,7 +419,7 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	descSBVertBuffer.Usage = D3D11_USAGE_IMMUTABLE;
 	descSBVertBuffer.BindFlags = D3D11_BIND_VERTEX_BUFFER;
 	descSBVertBuffer.CPUAccessFlags = NULL;
-	descSBVertBuffer.ByteWidth = sizeof(SIMPLE_VERTEX)* 2280;
+	descSBVertBuffer.ByteWidth = sizeof(SIMPLE_VERTEX) * 2280;
 
 
 
@@ -461,9 +485,9 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	hr = pDevice->CreatePixelShader(Skybox_PS, sizeof(Skybox_PS), NULL, &pSkybox_PS);
 	hr = pDevice->CreateGeometryShader(GeometryShader, sizeof(GeometryShader), NULL, &pGeometryShader);
 	hr = pDevice->CreatePixelShader(MultiTexture_PS, sizeof(MultiTexture_PS), NULL, &pMultitexture_PS);
-	
+
 	//Setup the input layout
-	D3D11_INPUT_ELEMENT_DESC vLayout[] = 
+	D3D11_INPUT_ELEMENT_DESC vLayout[] =
 	{
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
 		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
@@ -506,7 +530,21 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 
 	//Create the scene const buffer
 	hr = pDevice->CreateBuffer(&descSceneConstBuffer, NULL, &pSceneCBuffer);
-	
+
+
+
+
+	//Describe the scene2 constant buffer
+	D3D11_BUFFER_DESC descScene2ConstBuffer;
+	ZeroMemory(&descScene2ConstBuffer, sizeof(descScene2ConstBuffer));
+	descScene2ConstBuffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	descScene2ConstBuffer.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+	descScene2ConstBuffer.Usage = D3D11_USAGE_DYNAMIC;
+	descScene2ConstBuffer.ByteWidth = sizeof(SCENE);
+
+	//Create the scene2 const buffer
+	hr = pDevice->CreateBuffer(&descScene2ConstBuffer, NULL, &pScene2CBuffer);
+
 
 	//Describe the depth buffer
 	D3D11_TEXTURE2D_DESC descDepthBuffer;
@@ -629,7 +667,7 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 	descIndexBuffer.BindFlags = D3D10_BIND_INDEX_BUFFER;
 	descIndexBuffer.ByteWidth = sizeof(unsigned int) * TriVerts;
 	descIndexBuffer.Usage = D3D11_USAGE_DEFAULT;
-	
+
 
 	//Create the initial data for the index buffer
 	D3D11_SUBRESOURCE_DATA indexInitData;
@@ -650,7 +688,7 @@ APPLICATION::APPLICATION(HINSTANCE hinst, WNDPROC proc)
 
 	hr = pDevice->CreateBuffer(&descObjectConstBuffer, NULL, &pObjectCBuffer);
 
-	
+
 	pSBCommandList = nullptr;
 
 	dt = 0;
@@ -669,8 +707,13 @@ bool APPLICATION::Run()
 	pDeferredContext->OMSetRenderTargets(1, &pRTV, pDSV);
 
 	//Set viewports
-	pDeferredContext->RSSetViewports(1, &vp);
+	if(bSplitScreen)
+	pDeferredContext->RSSetViewports(2, &vp);
+	else
+	{
+		pDeferredContext->RSSetViewports(1, &vp3);
 
+	}
 	//Set screen clear color
 	//Blood red
 	float clearColor[4] =
@@ -690,11 +733,11 @@ bool APPLICATION::Run()
 		0, 0, 1, 0,
 		0, 0, 0, 1
 	};
-	
+
 	//Create and manipulate the character models world matrix for its rotation and scaling
 	XMStoreFloat4x4(&character.worldMatrix, XMMatrixMultiply(XMMatrixIdentity(), XMMatrixScaling(0.1f, 0.1f, 0.1f)));
 	XMStoreFloat4x4(&character.worldMatrix, XMMatrixRotationY(dt));
-	
+
 	//Rotate world matrix on y axis
 	XMStoreFloat4x4(&star.worldMatrix, XMMatrixRotationY(dt));
 
@@ -708,32 +751,65 @@ bool APPLICATION::Run()
 		0, 0, 0, 1
 	};
 
+	//Create the scene's view matrix 
+	scene2.viewMatrix =
+	{
+		1, 0, 0, 0,
+		0, 1, 0, 0,
+		0, 0, 1, 0,
+		0, 0, 0, 1
+	};
+
 	//Create the view matrix
 	XMMATRIX sceneViewMat = XMLoadFloat4x4(&scene.viewMatrix);
 	XMVECTOR sceneViewDet = XMMatrixDeterminant(sceneViewMat);
-	
-	
+
+
+	//Create the view matrix
+	XMMATRIX scene2ViewMat = XMLoadFloat4x4(&scene2.viewMatrix);
+	XMVECTOR scene2ViewDet = XMMatrixDeterminant(scene2ViewMat);
+
 	//Check for input to move the camera
 	CheckInput();
-	
+
 	//Apply camera rotations
 	sceneViewMat = XMMatrixMultiply(sceneViewMat, XMMatrixRotationY(rotationY));
 	sceneViewMat = XMMatrixMultiply(sceneViewMat, XMMatrixRotationX(rotationX));
 
 	//Apply camera translations
 	sceneViewMat = XMMatrixMultiply(sceneViewMat, XMMatrixTranslation(translateX, translateY, translateZ));
-	
+
+
+	//Apply camera2 rotations
+	scene2ViewMat = XMMatrixMultiply(scene2ViewMat, XMMatrixRotationX(XMConvertToRadians(65)));
+
+	//Apply camera2 translations
+	scene2ViewMat = XMMatrixMultiply(scene2ViewMat, XMMatrixTranslation(0, 10, -5));
+
+
 
 	XMStoreFloat4x4(&scene.viewMatrix, XMMatrixInverse(&sceneViewDet, sceneViewMat));
+	XMStoreFloat4x4(&scene2.viewMatrix, XMMatrixInverse(&scene2ViewDet, scene2ViewMat));
 
 
+	FLOAT aspect_ratio;
 
-	FLOAT aspect_ratio = BACKBUFFER_WIDTH / (float)BACKBUFFER_HEIGHT;
+	if(bSplitScreen)
+	{
+		aspect_ratio = (BACKBUFFER_WIDTH / 2) / (float)BACKBUFFER_HEIGHT;
+	}
+	else
+	{
+		aspect_ratio = BACKBUFFER_WIDTH / (float)BACKBUFFER_HEIGHT;
+	}
 
-	XMStoreFloat4x4( &scene.projMatrix,XMMatrixPerspectiveFovLH(XMConvertToRadians(65.0f), aspect_ratio, 0.01f, 1000.0f));
+
+	XMStoreFloat4x4(&scene.projMatrix, XMMatrixPerspectiveFovLH(XMConvertToRadians(65.0f), aspect_ratio, 0.01f, 1000.0f));
+	XMStoreFloat4x4(&scene2.projMatrix, XMMatrixPerspectiveFovLH(XMConvertToRadians(65.0f), aspect_ratio, 0.01f, 1000.0f));
+
 
 	XMStoreFloat4x4(&SkyBox.worldMatrix, XMMatrixTranslation(translateX, translateY, translateZ));
-	
+
 	//Create matrix for the plane
 	XMStoreFloat4x4(&plane.worldMatrix, XMMatrixTranslation(-scene.viewMatrix._41, -scene.viewMatrix._42, -scene.viewMatrix._43));
 
@@ -747,6 +823,7 @@ bool APPLICATION::Run()
 	memcpy(pSubRes.pData, &SkyBox, sizeof(OBJECT));
 	pDeferredContext->Unmap(pSkyboxCBuffer, 0);
 
+	XMMATRIX skybox1_world = XMLoadFloat4x4(&SkyBox.worldMatrix);
 
 	//Do the same for the scene
 	D3D11_MAPPED_SUBRESOURCE pSubResScene;
@@ -779,7 +856,78 @@ bool APPLICATION::Run()
 	pDeferredContext->Draw(2280, 0);
 
 	pDeferredContext->ClearDepthStencilView(pDSV, D3D11_CLEAR_DEPTH, 1.0f, NULL);
-	pDeferredContext->FinishCommandList(true, &pSBCommandList);
+	//pDeferredContext->FinishCommandList(true, &pSBCommandList);
+	//Draw the object	
+	//if(pSBCommandList)
+	//{
+	//	pDeviceContext->ExecuteCommandList(pSBCommandList, false);
+	//	pSBCommandList->Release();
+	//	pSBCommandList = nullptr;
+	//}
+
+
+
+
+	if(bSplitScreen)
+	{
+		//Set viewports
+		pDeferredContext->RSSetViewports(1, &vp2);
+
+
+		//Memcpy data from const buffer structs into Vertex shader const buffers
+		//Takes data from cpu to gpu
+		//Object 
+		XMMATRIX inverse_scene2_view = XMMatrixInverse(NULL, XMLoadFloat4x4(&scene2.viewMatrix));
+		XMVECTOR camera_pos = XMVectorSet(inverse_scene2_view.r[3].m128_f32[0],
+			inverse_scene2_view.r[3].m128_f32[1],
+			inverse_scene2_view.r[3].m128_f32[2],
+			inverse_scene2_view.r[3].m128_f32[3]);
+
+		SkyBox.worldMatrix._41 = camera_pos.m128_f32[0];
+		SkyBox.worldMatrix._42 = camera_pos.m128_f32[1];
+		SkyBox.worldMatrix._43 = camera_pos.m128_f32[2];
+
+		pDeferredContext->Map(pSkyboxCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
+			0, &pSubRes);
+		memcpy(pSubRes.pData, &SkyBox, sizeof(OBJECT));
+		pDeferredContext->Unmap(pSkyboxCBuffer, 0);
+
+
+		XMStoreFloat4x4(&SkyBox.worldMatrix, skybox1_world);
+
+		//Do the same for the scene
+		pDeferredContext->Map(pScene2CBuffer, 0, D3D11_MAP_WRITE_DISCARD,
+			0, &pSubResScene);
+		memcpy(pSubResScene.pData, &scene2, sizeof(SCENE));
+		pDeferredContext->Unmap(pScene2CBuffer, 0);
+
+		pDeferredContext->VSSetConstantBuffers(0, 1, &pSkyboxCBuffer);
+		pDeferredContext->VSSetConstantBuffers(1, 1, &pScene2CBuffer);
+
+
+		//Set the vertex buffer for our object
+		pDeferredContext->IASetVertexBuffers(0, 1, &pSBVertexBuffer, stride, offsets);
+
+		//Set the shaders to be used
+		pDeferredContext->VSSetShader(pSkybox_VS, NULL, 0);
+		pDeferredContext->PSSetShader(pSkybox_PS, NULL, 0);
+		pDeferredContext->PSSetShaderResources(0, 1, &pSRView);
+		pDeferredContext->PSSetSamplers(0, 1, &pSamplerState);
+
+		//Set the input layout to be used
+		pDeferredContext->IASetInputLayout(pInputLayout);
+
+		//Set the type of primitive topology to be used
+		pDeferredContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		pDeferredContext->RSSetState(this->pRSCullNone);
+		pDeferredContext->Draw(2280, 0);
+
+		pDeferredContext->ClearDepthStencilView(pDSV, D3D11_CLEAR_DEPTH, 1.0f, NULL);
+		pDeferredContext->FinishCommandList(true, &pSBCommandList);
+
+
+	}
+
 	//Draw the object	
 	if(pSBCommandList)
 	{
@@ -792,11 +940,13 @@ bool APPLICATION::Run()
 	thread GeometryDrawThread(GeometryDrawThreadEntry, this);
 	GeometryDrawThread.join();
 
+	if(pGeometryCommandList)
+	{
+		pDeviceContext->ExecuteCommandList(pGeometryCommandList, false);
+		pGeometryCommandList->Release();
+		pGeometryCommandList = nullptr;
+	}
 
-	pDeviceContext->ExecuteCommandList(pGeometryCommandList, false);
-	pGeometryCommandList->Release();
-	pGeometryCommandList = nullptr;
-	
 	//Present to the screen
 	pSwapChain->Present(0, 0);
 
@@ -838,11 +988,18 @@ bool APPLICATION::ShutDown()
 	pPlaneCBuffer->Release();
 	pPlaneVertBuffer->Release();
 	pGeometryShader->Release();
+	pScene2CBuffer->Release();
+	pGeoDeferredContext->Release();
+	pMultiSRV1->Release();
+	pMultiSRV2->Release();
 
-	
-	
+	pMultitexture_PS->Release();
 
-//	pDSLessEqual->Release();
+
+
+
+
+	//	pDSLessEqual->Release();
 
 	pDevice->Release();
 	UnregisterClass(L"DirectXApplication", application);
@@ -858,7 +1015,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPTSTR, int)
 {
 
 
-	
+
 	srand(unsigned int(time(0)));
 	APPLICATION myApp(hInstance, (WNDPROC)WndProc);
 	MSG msg; ZeroMemory(&msg, sizeof(msg));
@@ -890,6 +1047,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 //Check for input
 void APPLICATION::CheckInput()
 {
+	//if(GetAsyncKeyState('V') & 0x1)
+	//{
+	//	bSplitScreen = !bSplitScreen;
+	//	FLOAT color[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+	//	pDeviceContext->ClearRenderTargetView(pRTV, color);
+	//	pDeviceContext->ClearDepthStencilView(pDSV, D3D11_CLEAR_DEPTH, 1.0f, NULL);
+	//}
+
 	if(GetAsyncKeyState('W'))
 	{
 		translateZ += 1 * timer.Delta();
@@ -937,12 +1102,12 @@ void APPLICATION::CheckInput()
 bool APPLICATION::LoadFBX(vector<APPLICATION::SIMPLE_VERTEX>* output, string filename, int numVerts)
 {
 	FbxManager* pFBXManager = nullptr;
-		pFBXManager = FbxManager::Create();
+	pFBXManager = FbxManager::Create();
 	//if(pFBXManager == nullptr)
 	//{
 
-		FbxIOSettings* pIOSettings = FbxIOSettings::Create(pFBXManager, IOSROOT);
-		pFBXManager->SetIOSettings(pIOSettings);
+	FbxIOSettings* pIOSettings = FbxIOSettings::Create(pFBXManager, IOSROOT);
+	pFBXManager->SetIOSettings(pIOSettings);
 
 	//}
 
@@ -981,7 +1146,7 @@ bool APPLICATION::LoadFBX(vector<APPLICATION::SIMPLE_VERTEX>* output, string fil
 			}
 
 			FbxNodeAttribute::EType AttributeType = pChildNode->GetNodeAttribute()->GetAttributeType();
-			
+
 			if(AttributeType != FbxNodeAttribute::eMesh)
 			{
 				continue;
@@ -998,11 +1163,11 @@ bool APPLICATION::LoadFBX(vector<APPLICATION::SIMPLE_VERTEX>* output, string fil
 
 				assert(nNumVertices == 3 &&
 					"LoadFBX function failed due to a vert count not equal to 3. Polygons must be triangles");
-				
+
 				for(unsigned int k = 0; k < nNumVertices; k++)
 				{
 					int nControlPointIndex = pMesh->GetPolygonVertex(j, k);
-					
+
 					SIMPLE_VERTEX vert;
 					//Set vert positions
 					vert.position.x = (float)pVertices[nControlPointIndex].mData[0];
@@ -1012,7 +1177,7 @@ bool APPLICATION::LoadFBX(vector<APPLICATION::SIMPLE_VERTEX>* output, string fil
 					//create variables to get the vert normals
 					FbxVector4 normal;
 					pMesh->GetPolygonVertexNormal(j, k, normal);
-					
+
 					//Set the vert normals
 					vert.normal.x = normal.mData[0];
 					vert.normal.y = normal.mData[1];
@@ -1060,11 +1225,11 @@ bool APPLICATION::LoadFBX(vector<APPLICATION::SIMPLE_VERTEX>* output, string fil
 
 void APPLICATION::ModelThreadEntry(APPLICATION* which)
 {
-	
+
 	which->LoadFBX(&which->SkyBoxVerts,
 		"..\\Assets\\Sphere.fbx",
 		which->SBNumVerts);
-	which->LoadFBX(&which->CharacterVerts, 
+	which->LoadFBX(&which->CharacterVerts,
 		"..\\Assets\\Knight.fbx",
 		which->SBNumVerts);
 
@@ -1080,7 +1245,7 @@ void APPLICATION::ModelThreadEntry(APPLICATION* which)
 
 void APPLICATION::TextureThreadEntry(APPLICATION* which)
 {
-	
+
 
 	CreateDDSTextureFromFile(which->pDevice, L"../Assets/GoldKnight.dds", NULL, &which->pCharacterSRV);
 	CreateDDSTextureFromFile(which->pDevice, L"../Assets/Skybox.dds", NULL, &which->pSRView);
@@ -1140,6 +1305,7 @@ void APPLICATION::SBDrawThreadEntry(APPLICATION* which)
 void APPLICATION::GeometryDrawThreadEntry(APPLICATION* which)
 {
 
+	ID3D11GeometryShader* pNullGeoShader = nullptr;
 	unsigned int stride[] = { sizeof(SIMPLE_VERTEX) };
 	unsigned int offsets[] = { 0 };
 
@@ -1148,13 +1314,27 @@ void APPLICATION::GeometryDrawThreadEntry(APPLICATION* which)
 	which->pGeoDeferredContext->OMSetRenderTargets(1, &which->pRTV, which->pDSV);
 
 	//Set viewports
-	which->pGeoDeferredContext->RSSetViewports(1, &which->vp);
+	if(which->bSplitScreen)
+	which->pGeoDeferredContext->RSSetViewports(2, &which->vp);
+	else
+	which->pGeoDeferredContext->RSSetViewports(1, &which->vp3);
+
+	
+	D3D11_MAPPED_SUBRESOURCE pStarSubRes;
+	D3D11_MAPPED_SUBRESOURCE PlaneSubRes;
+	D3D11_MAPPED_SUBRESOURCE CharSubRes;
+	ID3D11ShaderResourceView* textureArr[2] =
+	{
+		which->pMultiSRV1,
+		which->pMultiSRV2
+	};
+
+
 
 	which->pGeoDeferredContext->IASetIndexBuffer(which->pIndexBuffer, DXGI_FORMAT_R32_UINT, 0);
 	which->pGeoDeferredContext->IASetVertexBuffers(0, 1, &which->pStarVertBuffer, stride, offsets);
 
 	//Memcpy the stars data from cpu to gpu
-	D3D11_MAPPED_SUBRESOURCE pStarSubRes;
 	which->pGeoDeferredContext->Map(which->pObjectCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
 		0, &pStarSubRes);
 	memcpy(pStarSubRes.pData, &which->star, sizeof(OBJECT));
@@ -1165,6 +1345,7 @@ void APPLICATION::GeometryDrawThreadEntry(APPLICATION* which)
 	which->pGeoDeferredContext->VSSetConstantBuffers(1, 1, &which->pSceneCBuffer);
 
 	//Change shaders 
+	which->pGeoDeferredContext->GSSetShader(pNullGeoShader, NULL, NULL);
 	which->pGeoDeferredContext->VSSetShader(which->pVertexShader, NULL, 0);
 	which->pGeoDeferredContext->PSSetShader(which->pPixelShader, NULL, 0);
 	which->pGeoDeferredContext->PSSetShaderResources(0, 1, &which->NullSRV);
@@ -1180,13 +1361,13 @@ void APPLICATION::GeometryDrawThreadEntry(APPLICATION* which)
 
 	//Start character model drawing
 	//Memcpy the characters data from cpu to gpu
-	D3D11_MAPPED_SUBRESOURCE CharSubRes;
 	which->pGeoDeferredContext->Map(which->pCharacterCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
 		0, &CharSubRes);
 	memcpy(CharSubRes.pData, &which->character, sizeof(OBJECT));
 	which->pGeoDeferredContext->Unmap(which->pCharacterCBuffer, 0);
 
 	//Set values for drawing for new model
+	which->pGeoDeferredContext->GSSetShader(pNullGeoShader, NULL, NULL);
 	which->pGeoDeferredContext->PSSetShaderResources(0, 1, &which->pCharacterSRV);
 	which->pGeoDeferredContext->VSSetConstantBuffers(0, 1, &which->pCharacterCBuffer);
 	which->pGeoDeferredContext->VSSetConstantBuffers(1, 1, &which->pSceneCBuffer);
@@ -1197,7 +1378,6 @@ void APPLICATION::GeometryDrawThreadEntry(APPLICATION* which)
 
 	//Start plane drawing
 	//Memcpy the planes data from cpu to gpu
-	D3D11_MAPPED_SUBRESOURCE PlaneSubRes;
 	which->pGeoDeferredContext->Map(which->pPlaneCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
 		0, &PlaneSubRes);
 	memcpy(PlaneSubRes.pData, &which->plane, sizeof(OBJECT));
@@ -1212,17 +1392,112 @@ void APPLICATION::GeometryDrawThreadEntry(APPLICATION* which)
 	which->pGeoDeferredContext->GSSetConstantBuffers(1, 1, &which->pSceneCBuffer);
 	which->pGeoDeferredContext->PSSetShader(which->pMultitexture_PS, NULL, 0);
 	which->pGeoDeferredContext->PSSetSamplers(0, 1, &which->pSamplerState);
-	
-	ID3D11ShaderResourceView* textureArr[2] =
-	{
-		which->pMultiSRV1,
-		which->pMultiSRV2
-	};
+
+
 	which->pGeoDeferredContext->PSSetShaderResources(0, 2, textureArr);
 
 
 	which->pGeoDeferredContext->IASetVertexBuffers(0, 1, &which->pPlaneVertBuffer, stride, offsets);
 	which->pGeoDeferredContext->Draw(1, 0);
+
+
+
+
+
+
+
+
+
+
+
+	if(which->bSplitScreen)
+	{
+		//Set values for star draw call
+		//Set Render Target
+
+		which->pGeoDeferredContext->OMSetRenderTargets(1, &which->pRTV, which->pDSV);
+
+		//Set viewports
+		which->pGeoDeferredContext->RSSetViewports(2, &which->vp2);
+
+
+		which->pGeoDeferredContext->IASetIndexBuffer(which->pIndexBuffer, DXGI_FORMAT_R32_UINT, 0);
+		which->pGeoDeferredContext->IASetVertexBuffers(0, 1, &which->pStarVertBuffer, stride, offsets);
+
+		//Memcpy the stars data from cpu to gpu
+
+		which->pGeoDeferredContext->Map(which->pObjectCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
+			0, &pStarSubRes);
+		memcpy(pStarSubRes.pData, &which->star, sizeof(OBJECT));
+		which->pGeoDeferredContext->Unmap(which->pObjectCBuffer, 0);
+
+		//set the star's constant buffer
+		which->pGeoDeferredContext->VSSetConstantBuffers(0, 1, &which->pObjectCBuffer);
+		which->pGeoDeferredContext->VSSetConstantBuffers(1, 1, &which->pScene2CBuffer);
+
+		//Change shaders 
+		which->pGeoDeferredContext->GSSetShader(pNullGeoShader, NULL, NULL);
+		which->pGeoDeferredContext->VSSetShader(which->pVertexShader, NULL, 0);
+		which->pGeoDeferredContext->PSSetShader(which->pPixelShader, NULL, 0);
+		which->pGeoDeferredContext->PSSetShaderResources(0, 1, &which->NullSRV);
+		which->pGeoDeferredContext->PSSetSamplers(0, 1, &which->pSamplerState);
+		//Input layout
+		which->pGeoDeferredContext->IASetInputLayout(which->pInputLayout);
+		//Rasterizer State
+		which->pGeoDeferredContext->RSSetState(which->pRSDefault);
+		//Primitive topology
+		which->pGeoDeferredContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+		which->pGeoDeferredContext->DrawIndexed(which->TriVerts, 0, 0);
+
+		//Start character model drawing
+		//Memcpy the characters data from cpu to gpu
+
+
+
+		which->pGeoDeferredContext->Map(which->pCharacterCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
+			0, &CharSubRes);
+		memcpy(CharSubRes.pData, &which->character, sizeof(OBJECT));
+		which->pGeoDeferredContext->Unmap(which->pCharacterCBuffer, 0);
+
+		//Set values for drawing for new model
+		which->pGeoDeferredContext->GSSetShader(pNullGeoShader, NULL, NULL);
+		which->pGeoDeferredContext->PSSetShaderResources(0, 1, &which->pCharacterSRV);
+		which->pGeoDeferredContext->VSSetConstantBuffers(0, 1, &which->pCharacterCBuffer);
+		which->pGeoDeferredContext->VSSetConstantBuffers(1, 1, &which->pScene2CBuffer);
+
+		which->pGeoDeferredContext->IASetVertexBuffers(0, 1, &which->pCharacterVertexBuffer, stride, offsets);
+		which->pGeoDeferredContext->Draw(17544, 0);
+
+
+
+		//Start plane drawing
+		//Memcpy the planes data from cpu to gpu
+
+		which->pGeoDeferredContext->Map(which->pPlaneCBuffer, 0, D3D11_MAP_WRITE_DISCARD,
+			0, &PlaneSubRes);
+		memcpy(PlaneSubRes.pData, &which->plane, sizeof(OBJECT));
+		which->pGeoDeferredContext->Unmap(which->pPlaneCBuffer, 0);
+
+		//Set values for drawing for new model
+		which->pGeoDeferredContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
+		which->pGeoDeferredContext->VSSetConstantBuffers(0, 1, &which->pPlaneCBuffer);
+		which->pGeoDeferredContext->VSSetConstantBuffers(1, 1, &which->pScene2CBuffer);
+		which->pGeoDeferredContext->GSSetShader(which->pGeometryShader, NULL, 0);
+		which->pGeoDeferredContext->GSSetConstantBuffers(0, 1, &which->pPlaneCBuffer);
+		which->pGeoDeferredContext->GSSetConstantBuffers(1, 1, &which->pScene2CBuffer);
+		which->pGeoDeferredContext->PSSetShader(which->pMultitexture_PS, NULL, 0);
+		which->pGeoDeferredContext->PSSetSamplers(0, 1, &which->pSamplerState);
+
+
+		which->pGeoDeferredContext->PSSetShaderResources(0, 2, textureArr);
+
+
+		which->pGeoDeferredContext->IASetVertexBuffers(0, 1, &which->pPlaneVertBuffer, stride, offsets);
+		which->pGeoDeferredContext->Draw(1, 0);
+
+	}
+
 
 
 	which->pGeoDeferredContext->FinishCommandList(false, &which->pGeometryCommandList);
